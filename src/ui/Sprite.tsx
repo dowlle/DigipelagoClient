@@ -1,20 +1,29 @@
-// Digi-API CDN sprite. `shadow` renders it as a black silhouette (MC mode);
-// per IP posture (ADR-0003) self-hosting sprites is a later step.
+// Digi-API CDN sprite. `shadow` renders it as a silhouette with a themed glow
+// (MC + hard mode + locked dex cells). Per IP posture (ADR-0003) self-hosting
+// sprites is a later step.
 
 export function Sprite({
   src,
   name,
   shadow = false,
-  small = false,
+  className = '',
 }: {
   src: string | null;
   name: string;
   shadow?: boolean;
-  small?: boolean;
+  className?: string;
 }) {
   if (!src) {
-    return <span className="muted">{shadow ? '???' : name}</span>;
+    return <span className="text-xs" style={{ color: 'var(--dp-text-muted)' }}>{shadow ? '???' : name}</span>;
   }
-  const cls = `sprite${shadow ? ' shadow' : ''}${small ? ' small' : ''}`;
-  return <img className={cls} src={src} alt={shadow ? 'Mystery Digimon' : name} loading="lazy" />;
+  return (
+    <img
+      className={`object-contain ${className}`}
+      src={src}
+      alt={shadow ? 'Mystery Digimon' : name}
+      loading="lazy"
+      draggable={false}
+      style={shadow ? { filter: 'brightness(0) drop-shadow(0 0 3px var(--dp-silhouette-glow))' } : undefined}
+    />
+  );
 }

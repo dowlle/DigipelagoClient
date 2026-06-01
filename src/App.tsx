@@ -1,4 +1,3 @@
-import './ui/styles.css';
 import { GameProvider } from './game/context';
 import { GameView } from './ui/GameView';
 

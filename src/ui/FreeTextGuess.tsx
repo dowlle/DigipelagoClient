@@ -37,19 +37,21 @@ export function FreeTextGuess() {
   };
 
   return (
-    <div className="panel">
-      <form className="row" onSubmit={submit}>
+    <div>
+      <form className="flex gap-2" onSubmit={submit}>
         <input
           autoFocus
-          style={{ flex: 1 }}
+          className="dp-input flex-1"
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Type a Digimon name…"
           aria-label="Digimon name"
         />
-        <button className="primary" type="submit">Guess</button>
+        <button className="dp-btn dp-btn-primary px-5 text-sm" type="submit">Guess</button>
       </form>
-      <p className={`toast ${toast?.good ? 'good' : 'bad'}`} style={{ marginBottom: 0 }}>{toast?.msg ?? ''}</p>
+      <p className={`mt-2 h-5 text-sm font-semibold ${toast?.good ? 'text-green-400' : 'text-red-400'}`}>
+        {toast?.msg ?? ''}
+      </p>
     </div>
   );
 }

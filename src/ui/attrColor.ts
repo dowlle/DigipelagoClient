@@ -1,13 +1,13 @@
-// Attribute → CSS colour-variable map (see styles.css). Falls back to Unknown.
+// Attribute → accent hex. Used for the dex cell attribute dot + grouping accents.
 const MAP: Record<string, string> = {
-  Vaccine: 'var(--attr-vaccine)',
-  Virus: 'var(--attr-virus)',
-  Data: 'var(--attr-data)',
-  Free: 'var(--attr-free)',
-  Variable: 'var(--attr-variable)',
-  Unknown: 'var(--attr-unknown)',
+  Vaccine: '#3b82f6', // blue
+  Virus: '#ef4444', // red
+  Data: '#22c55e', // green
+  Free: '#14b8a6', // teal
+  Variable: '#f59e0b', // amber
+  Unknown: '#64748b', // slate
 };
 
 export function attrColor(attribute: string): string {
-  return MAP[attribute] ?? 'var(--attr-unknown)';
+  return MAP[attribute] ?? '#64748b';
 }

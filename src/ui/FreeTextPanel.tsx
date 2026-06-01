@@ -8,9 +8,14 @@ import { HardModeGuess } from './HardModeGuess';
 export function FreeTextPanel() {
   const [hard, setHard] = useState(false);
   return (
-    <div>
-      <label className="hardmode-toggle">
-        <input type="checkbox" checked={hard} onChange={(e) => setHard(e.target.checked)} />
+    <div className="dp-panel p-4">
+      <label className="inline-flex items-center gap-2 mb-3 cursor-pointer text-sm select-none">
+        <input
+          type="checkbox"
+          checked={hard}
+          onChange={(e) => setHard(e.target.checked)}
+          className="w-4 h-4 accent-[var(--dp-accent)]"
+        />
         <span>Hard mode — identify the hidden Digimon from clues</span>
       </label>
       {hard ? <HardModeGuess /> : <FreeTextGuess />}

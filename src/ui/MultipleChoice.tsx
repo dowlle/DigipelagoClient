@@ -37,8 +37,6 @@ export function MultipleChoice() {
     setPicked(null);
   }, [slotData, state, allEntries]);
 
-  // Begin a round whenever there is none. `startRound` is recreated with fresh
-  // `state` each render, so a post-catch round picks from the updated pool.
   useEffect(() => {
     if (!target) startRound();
   }, [target, startRound]);
@@ -51,46 +49,65 @@ export function MultipleChoice() {
     if (choice.id === target.id) {
       setRevealed(true);
       catchDigimon(target.id);
-      window.setTimeout(() => setTarget(null), REVEAL_MS); // → effect starts next round
+      window.setTimeout(() => setTarget(null), REVEAL_MS);
     } else {
       meter.registerWrong();
-      window.setTimeout(() => setPicked(null), WRONG_FLASH_MS); // keep the same target, try again
+      window.setTimeout(() => setPicked(null), WRONG_FLASH_MS);
     }
   };
 
+  const optionClass = (c: Digimon) => {
+    const base = 'w-full text-left rounded-lg px-4 py-3 text-sm font-medium border transition-colors disabled:cursor-not-allowed';
+    if (revealed && c.id === target?.id) return `${base} bg-green-600 border-green-500 text-white`;
+    if (picked === c.id && c.id !== target?.id) return `${base} bg-red-600 border-red-500 text-white`;
+    return `${base} hover:border-[var(--dp-accent)]`;
+  };
+
   return (
-    <div className="panel">
-      <div className="row" style={{ marginBottom: '0.75rem' }}>
-        <span className="pill" title="Wrong-pick charges (regenerate over time)">
-          Meter {'●'.repeat(meter.remaining)}{'○'.repeat(meter.max - meter.remaining)}
+    <div className="dp-panel p-4">
+      <div className="flex items-center gap-3 mb-4">
+        <span className="dp-pill" title="Wrong-pick charges (regenerate over time)">
+          <span style={{ color: 'var(--dp-text-muted)' }}>Meter</span>
+          <span className="tracking-widest">
+            <span className="text-green-400">{'●'.repeat(meter.remaining)}</span>
+            <span style={{ color: 'var(--dp-text-muted)' }}>{'○'.repeat(meter.max - meter.remaining)}</span>
+          </span>
         </span>
-        {meter.blocked && <span className="muted">Recharging… {meter.secondsToRegen}s</span>}
+        {meter.blocked && (
+          <span className="text-sm" style={{ color: 'var(--dp-text-muted)' }}>Recharging… {meter.secondsToRegen}s</span>
+        )}
       </div>
 
       {target ? (
-        <div className="mc">
-          <div className="mc-sprite">
-            <Sprite src={target.sprite} name={target.name} shadow={!revealed} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 items-center">
+          <div
+            className="flex justify-center items-center min-h-[160px] sm:min-h-[230px] rounded-xl"
+            style={{ backgroundColor: 'var(--dp-bg-base)', border: '1px solid var(--dp-border)' }}
+          >
+            <Sprite src={target.sprite} name={target.name} shadow={!revealed} className="max-w-[180px] max-h-[180px]" />
           </div>
-          <div className="mc-options">
-            {choices.map((c) => {
-              const isCorrect = revealed && c.id === target.id;
-              const isWrong = picked === c.id && c.id !== target.id;
-              return (
-                <button
-                  key={c.id}
-                  className={isCorrect ? 'correct' : isWrong ? 'wrong' : ''}
-                  disabled={revealed || meter.blocked}
-                  onClick={() => handlePick(c)}
-                >
-                  {c.name}
-                </button>
-              );
-            })}
+          <div className="flex flex-col gap-2.5">
+            {choices.map((c) => (
+              <button
+                key={c.id}
+                className={optionClass(c)}
+                style={
+                  (revealed && c.id === target.id) || (picked === c.id && c.id !== target.id)
+                    ? undefined
+                    : { backgroundColor: 'var(--dp-bg-elevated)', borderColor: 'var(--dp-border-subtle)' }
+                }
+                disabled={revealed || meter.blocked}
+                onClick={() => handlePick(c)}
+              >
+                {c.name}
+              </button>
+            ))}
           </div>
         </div>
       ) : (
-        <p className="muted">No catchable Digimon right now — unlock more via the multiworld.</p>
+        <p className="text-sm" style={{ color: 'var(--dp-text-muted)' }}>
+          No catchable Digimon right now — unlock more via the multiworld.
+        </p>
       )}
     </div>
   );
