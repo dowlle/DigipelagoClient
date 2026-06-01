@@ -1,0 +1,144 @@
+// The orchestrator. Owns SlotData + GameState, supplies the connection handlers,
+// and rebuilds all state from the server on connect (ADR-0002: "connected" is the
+// source-of-truth boot event; localStorage holds only connection + prefs).
+//
+// The once-bound connection handlers read latest values through refs, never
+// closures, and every server-derived quantity is reconciled MONOTONICALLY
+// (caughtCount and the caught id-set only ever grow) so an unrelated recompute
+// between an optimistic catch and the server echo can't briefly undo it.
+
+import {
+  createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode,
+} from 'react';
+import type { Client } from 'archipelago.js';
+import { useAPConnection, type ConnectionInfo } from '../ap/connection';
+import { appendCaught, watchCaught } from '../ap/datastorage';
+import { catchSlotId, countCheckedCatchSlots } from '../ap/locations';
+import { DATASET_VERSION } from '../data/dataset';
+import { assertDatasetMatches, buildState } from './state';
+import type { GameState, SlotData } from './types';
+
+const EMPTY_STATE: GameState = {
+  capacity: 0,
+  tierReached: 0,
+  heldAttributes: new Set(),
+  caught: new Set(),
+  caughtCount: 0,
+};
+
+interface Identity {
+  team: number;
+  slot: number;
+}
+
+export interface GameContextValue {
+  isConnected: boolean;
+  connectionError: string | null;
+  slotData: SlotData | null;
+  state: GameState;
+  connect: (info: ConnectionInfo) => Promise<void>;
+  disconnect: () => void;
+  /** Dispatch a correct guess: check the next catch slot + record caught identity. */
+  catchDigimon: (digimonId: number) => void;
+}
+
+const GameContext = createContext<GameContextValue | undefined>(undefined);
+
+export function useGame(): GameContextValue {
+  const ctx = useContext(GameContext);
+  if (!ctx) throw new Error('useGame must be used within a GameProvider');
+  return ctx;
+}
+
+function unionInto(base: Set<number>, extra: Iterable<number>): Set<number> {
+  const merged = new Set(base);
+  for (const v of extra) merged.add(v);
+  return merged.size === base.size ? base : merged;
+}
+
+export function GameProvider({ children }: { children: ReactNode }) {
+  const ap = useAPConnection();
+  const [slotData, setSlotData] = useState<SlotData | null>(null);
+  const [state, setState] = useState<GameState>(EMPTY_STATE);
+
+  // Latest-value refs for the once-bound handlers (avoid stale closures).
+  const slotDataRef = useRef<SlotData | null>(null);
+  const caughtRef = useRef<Set<number>>(new Set());
+  const caughtCountRef = useRef(0); // monotonic
+  const identityRef = useRef<Identity | null>(null);
+
+  const recompute = useCallback((client: Client) => {
+    const slot = slotDataRef.current;
+    if (!slot) return;
+    caughtCountRef.current = Math.max(caughtCountRef.current, countCheckedCatchSlots(client));
+    const itemNames = client.items.received.map((i) => i.name);
+    const next = buildState(slot, itemNames, caughtCountRef.current, caughtRef.current);
+    setState(next);
+  }, []);
+
+  const handlers = useMemo(
+    () => ({
+      onConnected: async (client: Client, slot: SlotData) => {
+        assertDatasetMatches(slot, DATASET_VERSION); // refuse a drifted seed
+        slotDataRef.current = slot;
+        setSlotData(slot);
+
+        const id: Identity = { team: client.players.self.team, slot: client.players.self.slot };
+        identityRef.current = id;
+
+        // Authoritative reset from the server (re-notify after every reconnect).
+        const serverCaught = await watchCaught(client, id.team, id.slot, (remote) => {
+          caughtRef.current = unionInto(caughtRef.current, remote);
+          recompute(client);
+        });
+        caughtRef.current = serverCaught;
+        caughtCountRef.current = countCheckedCatchSlots(client);
+        recompute(client);
+      },
+      onDisconnected: () => {
+        // Keep last-known state on screen; refs persist for a clean reconnect.
+      },
+      onItemsReceived: (client: Client) => recompute(client),
+      onLocationsChecked: (client: Client) => recompute(client),
+    }),
+    [recompute],
+  );
+
+  const connect = useCallback(
+    (info: ConnectionInfo) => ap.connect(info, handlers),
+    [ap, handlers],
+  );
+
+  const catchDigimon = useCallback(
+    (digimonId: number) => {
+      const client = ap.clientRef.current;
+      const id = identityRef.current;
+      if (!client || !id) return;
+
+      const nextK = caughtCountRef.current + 1;
+      const locId = catchSlotId(client, nextK);
+      if (locId == null) return; // dataset/package not ready
+
+      client.check(locId); // sequential check keeps caughtCount === checked-slot count
+      appendCaught(client, id.team, id.slot, digimonId); // append-only identity (ADR-0002)
+
+      // Optimistic, monotonic local update; the server echo reconciles to the same.
+      caughtRef.current = unionInto(caughtRef.current, [digimonId]);
+      caughtCountRef.current = nextK;
+      recompute(client);
+    },
+    [ap.clientRef, recompute],
+  );
+
+  const value: GameContextValue = {
+    isConnected: ap.isConnected,
+    connectionError: ap.connectionError,
+    slotData,
+    state,
+    connect,
+    disconnect: ap.disconnect,
+    catchDigimon,
+  };
+
+  return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
+}
