@@ -8,6 +8,7 @@ import type { Dataset, Digimon } from '../game/types';
 import raw from './digimon_mvp.json';
 
 interface RawDataset {
+  version?: string;
   level_tier: Record<string, number>;
   attributes: string[];
   cell_counts: Record<string, number>;
@@ -18,11 +19,11 @@ interface RawDataset {
 
 const _raw = raw as unknown as RawDataset;
 
-// The version is computed at apworld-build time and embedded by the build tool;
-// for the bundled copy we read it from a sibling constant kept in sync by CI.
-// (Until the build writes it into the JSON, this is the known hash of the
-// committed snapshot — asserted against slot_data.dataset_version at connect.)
-export const DATASET_VERSION = '5139b0d9c00f';
+// Embedded by tools/build_digimon_data.py into digimon_mvp.json and READ here,
+// so the apworld (data.py) and this client share one token and can't drift.
+// Asserted against slot_data.dataset_version at connect. The fallback covers a
+// pre-embed bundle only.
+export const DATASET_VERSION = _raw.version ?? '0ba713b32382';
 
 export const dataset: Dataset = {
   version: DATASET_VERSION,
