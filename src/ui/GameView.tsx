@@ -3,7 +3,7 @@ import { getDigimon } from '../data/dataset';
 import { goalProgress } from '../game/guess';
 import { useGame } from '../game/context';
 import { ConnectionPanel } from './ConnectionPanel';
-import { FreeTextGuess } from './FreeTextGuess';
+import { FreeTextPanel } from './FreeTextPanel';
 import { MultipleChoice } from './MultipleChoice';
 import { DexGrid } from './DexGrid';
 
@@ -44,7 +44,7 @@ export function GameView() {
               Multiple choice
             </button>
           </div>
-          {mode === 'text' ? <FreeTextGuess /> : <MultipleChoice />}
+          {mode === 'text' ? <FreeTextPanel /> : <MultipleChoice />}
           <DexGrid />
         </>
       )}

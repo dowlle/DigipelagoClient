@@ -12,6 +12,7 @@ export interface Digimon {
   fields: string[];
   year: string | null;
   sprite: string | null;
+  xAntibody: boolean;      // clue dimension (boolean match)
 }
 
 // The pinned reference dataset (bundled with the client, version-gated).
