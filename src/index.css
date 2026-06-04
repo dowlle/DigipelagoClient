@@ -1,35 +1,73 @@
 @import "tailwindcss";
 
 /* ================================================================== */
-/*  Theme tokens — mirrors Pokepelago's --pp-* system (renamed --dp-*) */
-/*  :root = "default" clean-dark look (same values as Pokepelago).     */
-/*  [data-theme="digimon"] = bold "Digital World" cyan/blue variant.   */
+/*  HUD theme tokens — three palettes on ONE token vocabulary.          */
+/*  Every visible colour reads a --dp-* variable, so a palette is a     */
+/*  pure reskin (values ported from Digipelago_r2/hud-theme.js).        */
+/*                                                                      */
+/*   :root                  = Tide     (default · calm deep-teal)       */
+/*   [data-theme="terminal"] = Terminal (phosphor green on near-black)  */
+/*   [data-theme="vapor"]    = Vapor    (synthwave magenta + cyan)      */
+/*                                                                      */
+/*  Legacy --dp-* aliases (bg-surface, accent, accent-glow, radii, …)  */
+/*  are mapped onto the new HUD tokens so existing components keep      */
+/*  working unchanged during the migration.                            */
 /* ================================================================== */
 @layer base {
   :root {
-    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-    line-height: 1.5;
-    color-scheme: dark;
+    /* ---- Tide palette (default) ---- */
+    --dp-bg-base: #0E1117;
+    --dp-rail: #10141B;
+    --dp-card: #171D27;
+    --dp-card-2: #1C2330;
+    --dp-card-3: #212A38;
+    --dp-line: #252E3C;
+    --dp-line-soft: #1E2632;
+    --dp-text: #C9D2DE;
+    --dp-text-mid: #8B97A8;
+    --dp-text-faint: #566073;
+    --dp-primary: #2DE2E6;
+    --dp-secondary: #FF4D8D;
+    --dp-good: #28C083;
+    --dp-warn: #E8A234;
+    --dp-bad: #F2607A;
+    --dp-on-primary: #04141a;
+    --dp-grid: rgba(45, 226, 230, 0.025);
 
-    --dp-bg-base: #030712;
-    --dp-bg-surface: #0d1117;
-    --dp-bg-elevated: #1f2937;
-    --dp-bg-input: #030712;
-    --dp-border: #1f2937;
-    --dp-border-subtle: #374151;
-    --dp-text-primary: rgba(255, 255, 255, 0.87);
-    --dp-text-secondary: #9ca3af;
-    --dp-text-muted: #6b7280;
-    --dp-accent: #3b82f6;
-    --dp-accent-hover: #2563eb;
-    --dp-accent-glow: rgba(59, 130, 246, 0.3);
-    --dp-silhouette-glow: rgba(129, 140, 248, 0.35);
-    --dp-input-bg: #1f2937;
-    --dp-input-border: #4b5563;
-    --dp-input-focus: #22c55e;
+    /* per-attribute hues (A_TIDE) */
+    --dp-attr-vaccine: #3F8DF6;
+    --dp-attr-virus: #F2607A;
+    --dp-attr-data: #28C083;
+    --dp-attr-free: #19C5D6;
+    --dp-attr-variable: #E8A234;
+    --dp-attr-unknown: #8794AB;
+
+    /* fonts — system fallbacks keep the build offline-safe (no CDN dep) */
+    --dp-font-disp: "Space Grotesk", system-ui, sans-serif;
+    --dp-font-body: "IBM Plex Sans", system-ui, sans-serif;
+
+    /* ---- Legacy aliases mapped onto the HUD tokens ---- */
+    --dp-bg-surface: var(--dp-card);
+    --dp-bg-elevated: var(--dp-card-2);
+    --dp-bg-input: var(--dp-bg-base);
+    --dp-border: var(--dp-line);
+    --dp-border-subtle: var(--dp-line-soft);
+    --dp-text-primary: var(--dp-text);
+    --dp-text-secondary: var(--dp-text-mid);
+    --dp-text-muted: var(--dp-text-faint);
+    --dp-accent: var(--dp-primary);
+    --dp-accent-hover: var(--dp-good);
+    --dp-accent-glow: color-mix(in srgb, var(--dp-primary) 30%, transparent);
+    --dp-silhouette-glow: color-mix(in srgb, var(--dp-primary) 35%, transparent);
+    --dp-input-bg: var(--dp-card-2);
+    --dp-input-border: var(--dp-line);
+    --dp-input-focus: var(--dp-primary);
     --dp-card-radius: 0.75rem;
     --dp-slot-radius: 0.375rem;
 
+    font-family: var(--dp-font-body);
+    line-height: 1.5;
+    color-scheme: dark;
     color: var(--dp-text-primary);
     background-color: var(--dp-bg-base);
     font-synthesis: none;
@@ -38,25 +76,58 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  [data-theme="digimon"] {
-    --dp-bg-base: #06101e;
-    --dp-bg-surface: #0b1a2e;
-    --dp-bg-elevated: #12263f;
-    --dp-bg-input: #0e2236;
-    --dp-border: #1c3a5e;
-    --dp-border-subtle: #2a527e;
-    --dp-text-primary: #e6f6ff;
-    --dp-text-secondary: #8fb6d4;
-    --dp-text-muted: #5f86a4;
-    --dp-accent: #22d3ee;
-    --dp-accent-hover: #06b6d4;
-    --dp-accent-glow: rgba(34, 211, 238, 0.35);
-    --dp-silhouette-glow: rgba(56, 189, 248, 0.4);
-    --dp-input-bg: #0e2236;
-    --dp-input-border: #2a527e;
-    --dp-input-focus: #22d3ee;
-    --dp-card-radius: 1rem;
-    --dp-slot-radius: 0.5rem;
+  [data-theme="terminal"] {
+    --dp-bg-base: #06090b;
+    --dp-rail: #080d0a;
+    --dp-card: #0b1310;
+    --dp-card-2: #0e1a14;
+    --dp-card-3: #12221a;
+    --dp-line: #163826;
+    --dp-line-soft: #0f2418;
+    --dp-text: #bfe6cd;
+    --dp-text-mid: #6f9a82;
+    --dp-text-faint: #4a6655;
+    --dp-primary: #5BE38A;
+    --dp-secondary: #FFB454;
+    --dp-good: #5BE38A;
+    --dp-warn: #FFB454;
+    --dp-bad: #FF7A6B;
+    --dp-on-primary: #04140b;
+    --dp-grid: rgba(91, 227, 138, 0.03);
+
+    --dp-attr-vaccine: #57C7E0;
+    --dp-attr-virus: #FF8A5B;
+    --dp-attr-data: #5BE38A;
+    --dp-attr-free: #46D6B0;
+    --dp-attr-variable: #FFB454;
+    --dp-attr-unknown: #6f9a82;
+  }
+
+  [data-theme="vapor"] {
+    --dp-bg-base: #150a2e;
+    --dp-rail: #190f37;
+    --dp-card: #221346;
+    --dp-card-2: #2a1a54;
+    --dp-card-3: #341f63;
+    --dp-line: rgba(160, 110, 255, 0.26);
+    --dp-line-soft: rgba(160, 110, 255, 0.14);
+    --dp-text: #ECDBFF;
+    --dp-text-mid: #B79AD9;
+    --dp-text-faint: #7E69A6;
+    --dp-primary: #35E7F0;
+    --dp-secondary: #FF4DD8;
+    --dp-good: #46E0A0;
+    --dp-warn: #FFC24B;
+    --dp-bad: #FF5C9A;
+    --dp-on-primary: #10082a;
+    --dp-grid: rgba(255, 77, 216, 0.04);
+
+    --dp-attr-vaccine: #4FA6FF;
+    --dp-attr-virus: #FF5C9A;
+    --dp-attr-data: #46E0A0;
+    --dp-attr-free: #35E7F0;
+    --dp-attr-variable: #FFC24B;
+    --dp-attr-unknown: #9B86C6;
   }
 
   body {
@@ -69,19 +140,14 @@
   }
 }
 
-/* Themed page background with a soft accent glow (mirrors .themed-bg). */
+/* Themed page background — token-driven so every palette reskins it.
+   A subtle per-palette dot grid (--dp-grid) plus a soft primary glow. */
 @layer base {
   .themed-bg {
     background:
-      radial-gradient(ellipse 900px 400px at 50% -160px, var(--dp-accent-glow) 0%, transparent 70%),
+      radial-gradient(circle at 16px 16px, var(--dp-grid) 1px, transparent 2px),
+      radial-gradient(ellipse 900px 420px at 50% -160px, var(--dp-accent-glow) 0%, transparent 70%),
       var(--dp-bg-base);
-    background-attachment: fixed;
-  }
-  [data-theme="digimon"] .themed-bg {
-    background:
-      radial-gradient(circle at 16px 16px, rgba(56, 189, 248, 0.05) 1px, transparent 2px),
-      radial-gradient(ellipse 900px 420px at 50% -160px, rgba(34, 211, 238, 0.12) 0%, transparent 70%),
-      linear-gradient(180deg, #06101e 0%, #08182b 55%, #06101e 100%);
     background-size: 26px 26px, 100% 100%, 100% 100%;
     background-attachment: fixed;
   }

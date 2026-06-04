@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { Moon, Sparkles } from 'lucide-react';
 import { getDigimon } from '../data/dataset';
 import { goalProgress } from '../game/guess';
 import { useGame } from '../game/context';
-import { useTheme } from './useTheme';
+import { PaletteSwitcher } from './PaletteSwitcher';
 import { ConnectionPanel } from './ConnectionPanel';
 import { FreeTextPanel } from './FreeTextPanel';
 import { MultipleChoice } from './MultipleChoice';
@@ -22,7 +21,6 @@ function Pill({ label, value, title }: { label: string; value: string; title?: s
 
 export function GameView() {
   const { isConnected, slotData, state, disconnect } = useGame();
-  const { theme, toggle } = useTheme();
   const [mode, setMode] = useState<Mode>('text');
   const connected = isConnected && slotData;
   const goal = slotData ? goalProgress(state, slotData, getDigimon) : null;
@@ -46,14 +44,7 @@ export function GameView() {
                 {goal && <Pill label="Goal" value={`${goal.current}/${goal.target}`} />}
               </>
             )}
-            <button
-              className="dp-btn dp-btn-secondary inline-flex items-center gap-1.5"
-              onClick={toggle}
-              title={theme === 'default' ? 'Switch to Digital World theme' : 'Switch to default theme'}
-            >
-              {theme === 'default' ? <Sparkles size={14} /> : <Moon size={14} />}
-              {theme === 'default' ? 'Digital' : 'Default'}
-            </button>
+            <PaletteSwitcher />
             {connected && (
               <button className="dp-btn-danger" onClick={disconnect}>Disconnect</button>
             )}
