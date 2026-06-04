@@ -1,19 +1,39 @@
+// Silhouette mode (S4) — the hero "identify the silhouette" experience, rebuilt
+// over the UNCHANGED game logic (src/game/mc.ts) and the UNCHANGED self-healing
+// wrong-pick meter (useWrongPickMeter). Presentation only: every logic call here
+// (guessableTargets / pickTarget / buildChoices / catchDigimon / meter.*) is
+// identical to before; only the rendering changed.
+//
+// Ports SilhouetteMode + TriesMeter + OptionBtn + Burst from the round-2
+// hud-deep.jsx mock, token-driven so all three palettes reskin it:
+//   • Hero stage  — SpriteReveal (real-shape masked silhouette → full-colour
+//     cutout on solve) over a radial gradient, with a scan sweep + dot grid and,
+//     on solve, a 12-ray Burst + "<Name>!" caption.
+//   • Option buttons — idle / hover / wrong (X badge, shake, strikethrough, dim)
+//     / correct (check badge, pop, "CAUGHT").
+//   • Tries meter — segmented pips (calm good → tense bad as charges drain), a
+//     partially-filled "refilling" pip, and a "Ns to +1" / "Full" / "Recharging"
+//     read-out, all derived from the hook's existing outputs (no behaviour change).
+//
+// Flag C: neutral catchphrase — "Name the silhouette" (never the trademarked
+// Pokémon-anime line).
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Heart } from 'lucide-react';
 import { dataset } from '../data/dataset';
 import { useGame } from '../game/context';
 import { buildChoices, guessableTargets, pickTarget } from '../game/mc';
 import type { Digimon } from '../game/types';
 import { useWrongPickMeter } from './useWrongPickMeter';
 import { SpriteReveal } from './SpriteReveal';
+import { attrColor } from './attrColor';
 
 const NUM_CHOICES = 4;
-const REVEAL_MS = 900;
-const WRONG_FLASH_MS = 600;
+const REVEAL_MS = 1300;
+const REGEN_MS = 30_000; // mirror useWrongPickMeter's default (read-only, for the pip fill)
 
-// Identify-the-silhouette mode: a hidden target (drawn from the catchable pool)
-// is shown shadowed on the left (top on mobile); pick its name from the options
-// on the right (bottom on mobile). Correct → catch it. Wrong → consume the
-// self-regenerating meter (never an AP dependency).
+type OptionState = 'idle' | 'wrong' | 'correct' | 'dim';
+
 export function MultipleChoice() {
   const { slotData, state, catchDigimon } = useGame();
   const allEntries = useMemo(() => Object.values(dataset.meta), []);
@@ -21,7 +41,8 @@ export function MultipleChoice() {
   const [target, setTarget] = useState<Digimon | null>(null);
   const [choices, setChoices] = useState<Digimon[]>([]);
   const [revealed, setRevealed] = useState(false);
-  const [picked, setPicked] = useState<number | null>(null);
+  // Presentation-only: which option ids the player has wrong-picked this round.
+  const [wrongPicks, setWrongPicks] = useState<Set<number>>(() => new Set());
 
   const startRound = useCallback(() => {
     if (!slotData) return;
@@ -34,7 +55,7 @@ export function MultipleChoice() {
     setTarget(t);
     setChoices(buildChoices(t, allEntries, NUM_CHOICES));
     setRevealed(false);
-    setPicked(null);
+    setWrongPicks(new Set());
   }, [slotData, state, allEntries]);
 
   useEffect(() => {
@@ -45,70 +66,369 @@ export function MultipleChoice() {
 
   const handlePick = (choice: Digimon) => {
     if (revealed || meter.blocked || !target) return;
-    setPicked(choice.id);
     if (choice.id === target.id) {
       setRevealed(true);
       catchDigimon(target.id);
       window.setTimeout(() => setTarget(null), REVEAL_MS);
-    } else {
+    } else if (!wrongPicks.has(choice.id)) {
+      setWrongPicks((s) => new Set(s).add(choice.id));
       meter.registerWrong();
-      window.setTimeout(() => setPicked(null), WRONG_FLASH_MS);
     }
   };
 
-  const optionClass = (c: Digimon) => {
-    const base = 'w-full text-left rounded-lg px-4 py-3 text-sm font-medium border transition-colors disabled:cursor-not-allowed';
-    if (revealed && c.id === target?.id) return `${base} bg-green-600 border-green-500 text-white`;
-    if (picked === c.id && c.id !== target?.id) return `${base} bg-red-600 border-red-500 text-white`;
-    return `${base} hover:border-[var(--dp-accent)]`;
+  const optionState = (c: Digimon): OptionState => {
+    if (revealed) return c.id === target?.id ? 'correct' : 'dim';
+    if (wrongPicks.has(c.id)) return 'wrong';
+    return 'idle';
   };
 
+  // Refill progress of the next pip, derived from the hook (additive read-only):
+  // secondsToRegen counts down toward the next charge; map it to a 0..1 bar.
+  const progress = meter.secondsToRegen > 0
+    ? Math.min(1, Math.max(0, 1 - (meter.secondsToRegen * 1000) / REGEN_MS))
+    : 0;
+
   return (
-    <div className="dp-panel p-4">
-      <div className="flex items-center gap-3 mb-4">
-        <span className="dp-pill" title="Wrong-pick charges (regenerate over time)">
-          <span style={{ color: 'var(--dp-text-muted)' }}>Meter</span>
-          <span className="tracking-widest">
-            <span className="text-green-400">{'●'.repeat(meter.remaining)}</span>
-            <span style={{ color: 'var(--dp-text-muted)' }}>{'○'.repeat(meter.max - meter.remaining)}</span>
-          </span>
+    <div className="dp-card overflow-hidden p-5">
+      {/* header: mode caption + tiny meter summary echo */}
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span
+          className="text-[10px] font-medium uppercase tracking-[0.18em]"
+          style={{ color: 'var(--dp-text-faint)', fontFamily: 'var(--dp-font-body)' }}
+        >
+          Identify the silhouette
         </span>
-        {meter.blocked && (
-          <span className="text-sm" style={{ color: 'var(--dp-text-muted)' }}>Recharging… {meter.secondsToRegen}s</span>
-        )}
       </div>
 
       {target ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 items-center">
-          <div
-            className="flex justify-center items-center min-h-[160px] sm:min-h-[230px] rounded-xl"
-            style={{ backgroundColor: 'var(--dp-bg-base)', border: '1px solid var(--dp-border)' }}
-          >
-            <SpriteReveal src={target.sprite} name={target.name} revealed={revealed} className="w-[180px] h-[180px]" />
+        <div className="flex flex-col gap-6 lg:flex-row">
+          {/* ── hero stage ── */}
+          <div className="flex shrink-0 flex-col gap-3 lg:w-[300px]">
+            <div
+              className="relative grid aspect-square place-items-center overflow-hidden rounded-2xl"
+              style={{
+                border: '1px solid var(--dp-line)',
+                background: 'radial-gradient(circle at 50% 42%, var(--dp-card-3), var(--dp-bg-base))',
+              }}
+            >
+              {/* scan sweep — hidden once solved */}
+              {!revealed && (
+                <div
+                  className="hud-scan pointer-events-none absolute inset-x-0"
+                  style={{
+                    height: 2,
+                    top: '50%',
+                    background: 'linear-gradient(90deg, transparent, var(--dp-primary), transparent)',
+                    boxShadow: '0 0 12px var(--dp-primary)',
+                  }}
+                />
+              )}
+              {/* dot grid overlay */}
+              <div
+                className="pointer-events-none absolute inset-0 opacity-50"
+                style={{
+                  backgroundImage:
+                    'radial-gradient(circle, color-mix(in srgb, var(--dp-primary) 10%, transparent) 1px, transparent 1px)',
+                  backgroundSize: '14px 14px',
+                }}
+              />
+              {/* reveal reward rays */}
+              {revealed && <Burst />}
+              <div className="relative grid h-[78%] w-[78%] place-items-center">
+                <SpriteReveal
+                  src={target.sprite}
+                  name={target.name}
+                  revealed={revealed}
+                  fill="linear-gradient(180deg, var(--dp-primary), var(--dp-card-3))"
+                  className="h-full w-full"
+                />
+              </div>
+              {/* caption */}
+              <div className="absolute inset-x-0 bottom-3 text-center">
+                {revealed ? (
+                  <span
+                    className="hud-pop text-lg font-bold"
+                    style={{ color: 'var(--dp-good)', fontFamily: 'var(--dp-font-disp)' }}
+                  >
+                    {target.name}!
+                  </span>
+                ) : (
+                  <span
+                    className="text-[11px] tracking-[0.25em]"
+                    style={{ color: 'var(--dp-primary)', opacity: 0.8, fontFamily: 'var(--dp-font-body)' }}
+                  >
+                    SCANNING…
+                  </span>
+                )}
+              </div>
+            </div>
+            <TriesMeter
+              remaining={meter.remaining}
+              max={meter.max}
+              blocked={meter.blocked}
+              secondsToRegen={meter.secondsToRegen}
+              progress={progress}
+            />
           </div>
-          <div className="flex flex-col gap-2.5">
-            {choices.map((c) => (
-              <button
-                key={c.id}
-                className={optionClass(c)}
-                style={
-                  (revealed && c.id === target.id) || (picked === c.id && c.id !== target.id)
-                    ? undefined
-                    : { backgroundColor: 'var(--dp-bg-elevated)', borderColor: 'var(--dp-border-subtle)' }
-                }
-                disabled={revealed || meter.blocked}
-                onClick={() => handlePick(c)}
-              >
-                {c.name}
-              </button>
-            ))}
+
+          {/* ── prompt + options ── */}
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div
+              className="text-[10px] font-medium uppercase tracking-[0.15em]"
+              style={{ color: 'var(--dp-text-faint)', fontFamily: 'var(--dp-font-body)' }}
+            >
+              Identify the silhouette
+            </div>
+            <h2
+              className="mb-1 text-[22px] font-bold"
+              style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}
+            >
+              Name the silhouette
+            </h2>
+            <p className="mb-4 text-[13px]" style={{ color: 'var(--dp-text-mid)' }}>
+              Pick the name. Wrong picks cost a try — but tries come back, so you can&apos;t get stuck.
+            </p>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {choices.map((c, i) => (
+                <OptionBtn
+                  key={c.id}
+                  idx={i}
+                  label={c.name}
+                  attribute={c.attribute}
+                  state={optionState(c)}
+                  disabled={revealed || (meter.blocked && optionState(c) === 'idle')}
+                  onPick={() => handlePick(c)}
+                />
+              ))}
+            </div>
+
+            <div className="mt-auto pt-4">
+              {meter.blocked && !revealed ? (
+                <div
+                  className="flex items-center gap-2 text-[12px]"
+                  style={{ color: 'var(--dp-warn)', fontFamily: 'var(--dp-font-body)' }}
+                >
+                  <span
+                    className="hud-pulse h-1.5 w-1.5 rounded-full"
+                    style={{ background: 'var(--dp-warn)' }}
+                  />
+                  Out of tries — a pip refills in {meter.secondsToRegen}s. Take a breath.
+                </div>
+              ) : (
+                <div
+                  className="flex items-center gap-2 text-[12px]"
+                  style={{ color: 'var(--dp-text-faint)', fontFamily: 'var(--dp-font-body)' }}
+                >
+                  Tip: the attribute dot under each name is a clue.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       ) : (
-        <p className="text-sm" style={{ color: 'var(--dp-text-muted)' }}>
+        <p className="text-sm" style={{ color: 'var(--dp-text-mid)' }}>
           No catchable Digimon right now — unlock more via the multiworld.
         </p>
       )}
     </div>
+  );
+}
+
+// ── 12-ray reward burst behind the reveal ──────────────────────────────────
+function Burst() {
+  return (
+    <svg
+      viewBox="0 0 200 200"
+      className="hud-burst pointer-events-none absolute"
+      style={{ inset: '-20%', width: '140%', height: '140%' }}
+      aria-hidden
+    >
+      {Array.from({ length: 12 }).map((_, i) => {
+        const a = (i / 12) * Math.PI * 2;
+        return (
+          <line
+            key={i}
+            x1={100 + Math.cos(a) * 42}
+            y1={100 + Math.sin(a) * 42}
+            x2={100 + Math.cos(a) * 78}
+            y2={100 + Math.sin(a) * 78}
+            stroke="var(--dp-good)"
+            strokeWidth={i % 2 ? 2 : 4}
+            strokeLinecap="round"
+            opacity={0.8}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+// ── Tries meter — segmented pips, calm→tense, with a refilling pip ──────────
+function TriesMeter({
+  remaining,
+  max,
+  blocked,
+  secondsToRegen,
+  progress,
+}: {
+  remaining: number;
+  max: number;
+  blocked: boolean;
+  secondsToRegen: number;
+  progress: number;
+}) {
+  const low = remaining <= 1;
+  const pipColor = low ? 'var(--dp-bad)' : 'var(--dp-good)';
+  const label = remaining === max ? 'Full' : blocked ? 'Recharging' : `${secondsToRegen}s to +1`;
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <span
+          className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.1em]"
+          style={{ color: 'var(--dp-text-mid)', fontFamily: 'var(--dp-font-body)' }}
+        >
+          <Heart size={13} style={{ color: pipColor }} fill={blocked ? 'none' : pipColor} />
+          Tries
+        </span>
+        <span
+          className="flex items-center gap-1.5 text-[11px] font-semibold"
+          style={{ color: blocked ? 'var(--dp-warn)' : 'var(--dp-text-faint)', fontFamily: 'var(--dp-font-body)' }}
+        >
+          {blocked && (
+            <span className="hud-pulse h-1.5 w-1.5 rounded-full" style={{ background: 'var(--dp-warn)' }} />
+          )}
+          {label}
+        </span>
+      </div>
+      <div className="flex gap-1.5">
+        {Array.from({ length: max }).map((_, i) => {
+          const filled = i < remaining;
+          const isNext = i === remaining && remaining < max; // the refilling pip
+          return (
+            <div
+              key={i}
+              className="relative h-2.5 flex-1 overflow-hidden rounded"
+              style={{
+                background: 'var(--dp-line-soft)',
+                border: `1px solid ${filled ? 'transparent' : 'var(--dp-line)'}`,
+              }}
+            >
+              {filled && (
+                <div
+                  className="absolute inset-0"
+                  style={{ background: pipColor, boxShadow: `0 0 8px color-mix(in srgb, ${pipColor} 55%, transparent)` }}
+                />
+              )}
+              {isNext && (
+                <div
+                  className="absolute inset-y-0 left-0"
+                  style={{
+                    width: `${Math.round(progress * 100)}%`,
+                    background: 'color-mix(in srgb, var(--dp-warn) 80%, transparent)',
+                    boxShadow: '0 0 8px var(--dp-warn)',
+                    transition: 'width .3s linear',
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── option button — idle / hover / wrong / correct ─────────────────────────
+function OptionBtn({
+  idx,
+  label,
+  attribute,
+  state,
+  disabled,
+  onPick,
+}: {
+  idx: number;
+  label: string;
+  attribute: string;
+  state: OptionState;
+  disabled: boolean;
+  onPick: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const wrong = state === 'wrong';
+  const correct = state === 'correct';
+  const dim = state === 'dim';
+
+  let bg = 'var(--dp-card-2)';
+  let border = 'var(--dp-line)';
+  let fg = 'var(--dp-text)';
+  let shadow = 'none';
+  if (correct) {
+    bg = 'color-mix(in srgb, var(--dp-good) 14%, transparent)';
+    border = 'var(--dp-good)';
+    fg = 'var(--dp-good)';
+    shadow = '0 0 18px color-mix(in srgb, var(--dp-good) 35%, transparent)';
+  } else if (wrong) {
+    bg = 'color-mix(in srgb, var(--dp-bad) 10%, transparent)';
+    border = 'var(--dp-bad)';
+    fg = 'var(--dp-bad)';
+  } else if (hover && !disabled) {
+    bg = 'var(--dp-card-3)';
+    border = 'var(--dp-primary)';
+    shadow = '0 0 0 3px color-mix(in srgb, var(--dp-primary) 18%, transparent)';
+  }
+
+  const anim = wrong ? 'hud-shake' : correct ? 'hud-pop' : '';
+
+  return (
+    <button
+      type="button"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={onPick}
+      disabled={disabled}
+      className={`flex items-center gap-3 rounded-xl px-4 py-3.5 text-left transition-all ${anim}`}
+      style={{
+        background: bg,
+        border: `1.5px solid ${border}`,
+        color: fg,
+        boxShadow: shadow,
+        opacity: dim ? 0.4 : 1,
+        textDecoration: wrong ? 'line-through' : 'none',
+        cursor: disabled ? 'default' : 'pointer',
+      }}
+    >
+      <span
+        className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-xs font-bold"
+        style={{
+          background: correct ? 'var(--dp-good)' : wrong ? 'var(--dp-bad)' : 'color-mix(in srgb, var(--dp-primary) 12%, transparent)',
+          color: correct || wrong ? 'var(--dp-on-primary)' : 'var(--dp-primary)',
+          border: `1px solid ${correct ? 'var(--dp-good)' : wrong ? 'var(--dp-bad)' : 'var(--dp-line)'}`,
+          fontFamily: 'var(--dp-font-disp)',
+        }}
+      >
+        {correct ? '✓' : wrong ? '✕' : idx + 1}
+      </span>
+      <span
+        className="flex-1 truncate text-[15px] font-semibold"
+        style={{ fontFamily: 'var(--dp-font-disp)' }}
+      >
+        {label}
+      </span>
+      {/* attribute dot clue */}
+      {!correct && !wrong && (
+        <span
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ background: attrColor(attribute), boxShadow: `0 0 6px ${attrColor(attribute)}` }}
+          aria-hidden
+        />
+      )}
+      {correct && (
+        <span className="text-[11px] font-bold" style={{ color: 'var(--dp-good)', fontFamily: 'var(--dp-font-disp)' }}>
+          CAUGHT
+        </span>
+      )}
+    </button>
   );
 }
