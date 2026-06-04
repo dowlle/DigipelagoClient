@@ -211,6 +211,50 @@
     color: #fff;
     border-color: var(--dp-accent);
   }
+
+  /* ---- HUD chrome (S3 layout shell) ---- */
+  /* Card surface used by status cards, the rail's connection card, etc. */
+  .dp-card {
+    background-color: var(--dp-card);
+    border: 1px solid var(--dp-line);
+    border-radius: 14px;
+  }
+  /* Left sidebar nav container. */
+  .dp-rail {
+    background-color: var(--dp-rail);
+    border-right: 1px solid var(--dp-line);
+  }
+  /* A single nav item; [data-active] lights it to the primary accent. */
+  .dp-nav-item {
+    @apply flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm font-semibold transition-colors;
+    color: var(--dp-text-mid);
+    border: 1px solid transparent;
+    cursor: pointer;
+    width: 100%;
+    font-family: var(--dp-font-disp);
+  }
+  .dp-nav-item:hover:not([data-active="true"]) {
+    color: var(--dp-text);
+    background-color: var(--dp-line-soft);
+  }
+  .dp-nav-item[data-active="true"] {
+    color: var(--dp-primary);
+    background-color: color-mix(in srgb, var(--dp-primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--dp-primary) 38%, transparent);
+  }
+  /* A status card body (Storage / Tier / Goal). */
+  .dp-stat {
+    @apply flex items-center gap-3.5 p-4;
+    background-color: var(--dp-card);
+    border: 1px solid var(--dp-line);
+    border-radius: 14px;
+  }
+  .dp-stat-label {
+    @apply text-[10px] font-medium uppercase;
+    letter-spacing: 1px;
+    color: var(--dp-text-mid);
+    font-family: var(--dp-font-body);
+  }
 }
 
 @layer utilities {
