@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "bake-sprites": "node tools/bake-sprites.mjs"
   },
   "dependencies": {
     "archipelago.js": "2.0.4",
@@ -26,6 +27,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.4",
+    "pngjs": "7.0.0",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
     "vite": "7.3.2",

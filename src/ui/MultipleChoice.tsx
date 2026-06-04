@@ -4,7 +4,7 @@ import { useGame } from '../game/context';
 import { buildChoices, guessableTargets, pickTarget } from '../game/mc';
 import type { Digimon } from '../game/types';
 import { useWrongPickMeter } from './useWrongPickMeter';
-import { Sprite } from './Sprite';
+import { SpriteReveal } from './SpriteReveal';
 
 const NUM_CHOICES = 4;
 const REVEAL_MS = 900;
@@ -84,7 +84,7 @@ export function MultipleChoice() {
             className="flex justify-center items-center min-h-[160px] sm:min-h-[230px] rounded-xl"
             style={{ backgroundColor: 'var(--dp-bg-base)', border: '1px solid var(--dp-border)' }}
           >
-            <Sprite src={target.sprite} name={target.name} shadow={!revealed} className="max-w-[180px] max-h-[180px]" />
+            <SpriteReveal src={target.sprite} name={target.name} revealed={revealed} className="w-[180px] h-[180px]" />
           </div>
           <div className="flex flex-col gap-2.5">
             {choices.map((c) => (

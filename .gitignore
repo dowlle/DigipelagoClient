@@ -5,3 +5,10 @@ dist-ssr/
 .DS_Store
 *.log
 *.tsbuildinfo
+
+# Build-time sprite bake (tools/bake-sprites.mjs):
+#  - sprites-src/ is the ~90MB cached pinned snapshot; re-fetchable on demand,
+#    kept out of git to avoid doubling repo size. Re-populate with the bake.
+#  - the baked cutouts (public/cutouts/) + manifest (src/assets/cutouts/) ARE
+#    committed — they are the runtime assets the app loads.
+tools/sprites-src/
