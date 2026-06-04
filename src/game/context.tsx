@@ -40,6 +40,12 @@ export interface GameContextValue {
   disconnect: () => void;
   /** Dispatch a correct guess: check the next catch slot + record caught identity. */
   catchDigimon: (digimonId: number) => void;
+  /**
+   * Read-only handle on the live AP client, for presentation-only subscribers
+   * (e.g. the multiworld feed in src/ap/feed.ts). NEVER use this to drive game
+   * logic or send packets — it exists purely to *read* item/message streams.
+   */
+  clientRef: React.MutableRefObject<Client | null>;
 }
 
 const GameContext = createContext<GameContextValue | undefined>(undefined);
@@ -138,6 +144,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     connect,
     disconnect: ap.disconnect,
     catchDigimon,
+    clientRef: ap.clientRef,
   };
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

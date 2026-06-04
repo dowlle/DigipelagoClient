@@ -8,15 +8,20 @@
 // Ports NavRail + the shell layout from hud-deep.jsx / hud-deep2.jsx, but
 // token-driven and fed by real context state.
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette } from 'lucide-react';
 import { useGame } from '../game/context';
+import { useFeed } from '../ap/feed';
 import { PaletteSwitcher } from './PaletteSwitcher';
 import { ConnectionPanel } from './ConnectionPanel';
 import { FreeTextPanel } from './FreeTextPanel';
 import { MultipleChoice } from './MultipleChoice';
 import { DexGrid } from './DexGrid';
 import { StatusCards } from './StatusCards';
+import { FeedRail, FullFeed } from './Feed';
+import { CatchToast } from './moments/CatchToast';
+import { CapacityToast } from './moments/CapacityToast';
+import { useMoments } from './moments/useMoments';
 
 export type View = 'play' | 'dex' | 'multiworld' | 'settings';
 type Mode = 'text' | 'mc';
@@ -94,11 +99,13 @@ function NavRail({
   view,
   setView,
   caughtCount,
+  feedCount,
   slotName,
 }: {
   view: View;
   setView: (v: View) => void;
   caughtCount: number;
+  feedCount: number;
   slotName: string | null;
 }) {
   const addr = savedAddress();
@@ -111,7 +118,13 @@ function NavRail({
       <div className="flex flex-col gap-1">
         <NavItem icon={<Play {...ic} fill="currentColor" />} label="Play" active={view === 'play'} onClick={() => setView('play')} />
         <NavItem icon={<Grid3x3 {...ic} />} label="Digidex" badge={caughtCount} active={view === 'dex'} onClick={() => setView('dex')} />
-        <NavItem icon={<Globe {...ic} />} label="Multiworld" active={view === 'multiworld'} onClick={() => setView('multiworld')} />
+        <NavItem
+          icon={<Globe {...ic} />}
+          label="Multiworld"
+          badge={feedCount > 0 ? feedCount : undefined}
+          active={view === 'multiworld'}
+          onClick={() => setView('multiworld')}
+        />
         <NavItem icon={<SettingsIcon {...ic} />} label="Settings" active={view === 'settings'} onClick={() => setView('settings')} />
       </div>
       {/* Connection card */}
@@ -237,24 +250,42 @@ function SettingsView({ slotName }: { slotName: string | null }) {
   );
 }
 
-function ComingSoon({ title, blurb }: { title: string; blurb: string }) {
-  return (
-    <div className="dp-card flex flex-col items-center justify-center gap-2 p-10 text-center">
-      <h2 className="text-lg font-bold" style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}>
-        {title}
-      </h2>
-      <p className="max-w-md text-sm" style={{ color: 'var(--dp-text-secondary)' }}>
-        {blurb}
-      </p>
-    </div>
-  );
-}
-
 export function AppShell() {
-  const { isConnected, slotData, state, disconnect } = useGame();
+  const { isConnected, slotData, state, disconnect, clientRef } = useGame();
   const [view, setView] = useState<View>('play');
   const [mode, setMode] = useState<Mode>('text');
   const connected = isConnected && slotData;
+
+  // Read-only multiworld streams (S5) → activity feed + moment toasts.
+  const apRows = useFeed(clientRef, isConnected);
+  const { catchMoment, capacityMoment, capacityRows } = useMoments(state, apRows);
+
+  // Merge AP rows with synthetic capacity beats, newest first.
+  const feedRows = useMemo(
+    () => [...apRows, ...capacityRows].sort((a, b) => b.at - a.at),
+    [apRows, capacityRows],
+  );
+
+  // Live seat count from the room (peers in our team); falls back to 1.
+  const seats = useMemo(() => {
+    if (!isConnected) return 1;
+    const client = clientRef.current;
+    try {
+      const self = client?.players.self;
+      const team = client?.players.teams[self?.team ?? 0];
+      return team?.length ?? 1;
+    } catch {
+      return 1;
+    }
+    // recompute when connection or feed activity changes (peers may join).
+  }, [isConnected, clientRef, apRows.length]);
+
+  // 1s ticker so the feed's relative timestamps stay fresh.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // Pre-connect: force the connection screen regardless of the selected view.
   if (!connected) {
@@ -272,11 +303,14 @@ export function AppShell() {
 
   const slot = savedSlotName();
 
+  // capacity bump (for the Storage card glow): the most recent capacity beat.
+  const capBump = capacityMoment?.by;
+
   let main: ReactNode;
   if (view === 'play') {
     main = (
       <div className="flex flex-col gap-4">
-        <StatusCards state={state} slotData={slotData} />
+        <StatusCards state={state} slotData={slotData} bump={capBump} />
         <ModeTabs mode={mode} setMode={setMode} />
         {mode === 'text' ? <FreeTextPanel /> : <MultipleChoice />}
       </div>
@@ -284,21 +318,26 @@ export function AppShell() {
   } else if (view === 'dex') {
     main = <DexGrid />;
   } else if (view === 'multiworld') {
-    main = (
-      <ComingSoon
-        title="Multiworld"
-        blurb="The full multiworld activity feed — catches, items sent and received, capacity bumps and peer milestones — lands here."
-      />
-    );
+    main = <FullFeed rows={feedRows} seats={seats} now={now} />;
   } else {
     main = <SettingsView slotName={slot} />;
   }
 
   return (
     <div className="min-h-screen text-white font-sans themed-bg">
+      {/* Moment toasts — fixed top-centre, above everything (S5). */}
+      {catchMoment && <CatchToast moment={catchMoment} />}
+      {capacityMoment && <CapacityToast moment={capacityMoment} />}
+
       <div className="flex min-h-screen">
-        <NavRail view={view} setView={setView} caughtCount={state.caughtCount} slotName={slot} />
-        <main className="flex-1 px-3 pb-20 pt-4 sm:px-5 md:pb-6">
+        <NavRail
+          view={view}
+          setView={setView}
+          caughtCount={state.caughtCount}
+          feedCount={feedRows.length}
+          slotName={slot}
+        />
+        <main className="min-w-0 flex-1 px-3 pb-20 pt-4 sm:px-5 md:pb-6">
           <div className="mx-auto w-full max-w-screen-xl">
             {/* Top bar: quick palette toggle + disconnect (rail hosts nav). */}
             <div className="mb-4 flex items-center justify-end gap-2">
@@ -310,6 +349,8 @@ export function AppShell() {
             {main}
           </div>
         </main>
+        {/* Play-view live feed rail (desktop ≥ xl). */}
+        {view === 'play' && <FeedRail rows={feedRows} seats={seats} now={now} />}
       </div>
       <MobileTabs view={view} setView={setView} />
     </div>

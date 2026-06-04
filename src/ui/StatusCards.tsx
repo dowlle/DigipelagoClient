@@ -69,7 +69,16 @@ function goalSublabel(slot: SlotData): string {
   return 'Total caught';
 }
 
-export function StatusCards({ state, slotData }: { state: GameState; slotData: SlotData }) {
+export function StatusCards({
+  state,
+  slotData,
+  bump,
+}: {
+  state: GameState;
+  slotData: SlotData;
+  /** When set, the Storage card glows and shows a transient "+N" (S5). */
+  bump?: number;
+}) {
   const levels = useMemo(() => orderedLevels(slotData), [slotData]);
   const goal = useMemo(() => goalProgress(state, slotData, getDigimon), [state, slotData]);
 
@@ -80,8 +89,11 @@ export function StatusCards({ state, slotData }: { state: GameState; slotData: S
 
   return (
     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
-      {/* Storage */}
-      <div className="dp-stat">
+      {/* Storage — glows + shows "+N" briefly on a capacity bump (S5). */}
+      <div
+        className="dp-stat"
+        style={bump ? { boxShadow: '0 0 0 1px var(--dp-warn), 0 0 22px color-mix(in srgb, var(--dp-warn) 35%, transparent)' } : undefined}
+      >
         <Ring val={held} max={cap} color="var(--dp-primary)">
           <span className="text-[11px] font-semibold" style={{ color: 'var(--dp-primary)', fontFamily: 'var(--dp-font-disp)' }}>
             {pct}%
@@ -92,6 +104,11 @@ export function StatusCards({ state, slotData }: { state: GameState; slotData: S
           <div className="flex items-baseline gap-1.5" style={{ fontFamily: 'var(--dp-font-disp)' }}>
             <span className="text-[26px] font-bold" style={{ color: 'var(--dp-text)' }}>{held}</span>
             <span className="text-sm" style={{ color: 'var(--dp-text-faint)' }}>/ {cap}</span>
+            {bump != null && (
+              <span className="hud-pop text-sm font-bold" style={{ color: 'var(--dp-warn)', fontFamily: 'var(--dp-font-disp)' }}>
+                +{bump}
+              </span>
+            )}
           </div>
         </div>
       </div>
