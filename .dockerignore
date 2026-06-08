@@ -1,0 +1,19 @@
+node_modules
+.git
+.gitignore
+*.log
+*.tsbuildinfo
+
+# The image builds dist/ itself in the node stage; don't ship a stale local one.
+dist
+
+# Dev-only sprite caches / bake output (see .gitignore)
+tools/sprites-src
+tools/out
+public/cutouts
+
+# Local env / venv
+.env
+.venv
+__pycache__
+*.pyc

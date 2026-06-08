@@ -32,7 +32,7 @@ interface Unlocks {
   unlockedThemes: ThemeId[];
 }
 
-function loadUnlocks(): Unlocks {
+export function loadUnlocks(): Unlocks {
   try {
     const raw = localStorage.getItem(UNLOCKS_KEY);
     if (raw) {
@@ -46,6 +46,29 @@ function loadUnlocks(): Unlocks {
     /* best-effort */
   }
   return { gamesCompleted: 0, unlockedThemes: [] };
+}
+
+/** Locally unlocked theme ids (the explicit set; excludes always-on Tide). */
+export function loadUnlockedThemeIds(): ThemeId[] {
+  return loadUnlocks().unlockedThemes;
+}
+
+/** UNION the given theme ids into the local unlock set and persist it. Returns
+ *  the merged set. Only ever grows (monotonic), mirroring the server's themes
+ *  contract. Unknown ids are ignored. Best-effort: storage failures are silent. */
+export function mergeUnlockedThemeIds(ids: string[]): ThemeId[] {
+  const cur = loadUnlocks();
+  const valid = new Set<ThemeId>(cur.unlockedThemes);
+  for (const id of ids) {
+    if ((THEME_IDS as string[]).includes(id)) valid.add(id as ThemeId);
+  }
+  const merged = Array.from(valid);
+  try {
+    localStorage.setItem(UNLOCKS_KEY, JSON.stringify({ ...cur, unlockedThemes: merged }));
+  } catch {
+    /* prefs are best-effort */
+  }
+  return merged;
 }
 
 /** Is a palette currently unlocked? Tide always; others by gamesCompleted or an

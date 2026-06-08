@@ -9,8 +9,11 @@
 // token-driven and fed by real context state.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette, Lock, Image as ImageIcon } from 'lucide-react';
+import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette, Lock, Image as ImageIcon, User } from 'lucide-react';
 import { useGame } from '../game/context';
+import { useAuth } from '../api/useAuth';
+import { getThemes, putThemes } from '../api/backend';
+import { loadUnlockedThemeIds, mergeUnlockedThemeIds } from './useTheme';
 import { useFeed, type FeedRow } from '../ap/feed';
 import { getDigimon } from '../data/dataset';
 import type { McDifficulty } from '../game/mc';
@@ -324,6 +327,81 @@ function DifficultySettings({
   );
 }
 
+/** Account card: logged out shows a Discord login button; logged in shows the
+ *  profile + logout. On a fresh login we MERGE the localStorage theme unlocks
+ *  with the server's set (UNION both ways) so unlocks follow the account. */
+function AccountSettings() {
+  const { me, login, logout } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const synced = useRef(false);
+
+  // Once, after we know the user is logged in, reconcile theme unlocks: push the
+  // local set to the server (UNION upsert) and merge the returned union back into
+  // localStorage. Best-effort, never blocks the UI.
+  useEffect(() => {
+    if (!me || synced.current) return;
+    synced.current = true;
+    (async () => {
+      try {
+        const local = loadUnlockedThemeIds();
+        // Seed the server with local unlocks, then merge the server union back.
+        const serverUnion = await putThemes(local);
+        const remote = serverUnion.length ? serverUnion : await getThemes();
+        mergeUnlockedThemeIds(remote);
+      } catch {
+        /* unlock sync is best-effort; local stays the baseline */
+      }
+    })();
+  }, [me]);
+
+  const onLogout = async () => {
+    setBusy(true);
+    try {
+      await logout();
+      synced.current = false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="dp-card p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <User size={16} style={{ color: 'var(--dp-primary)' }} aria-hidden />
+        <span className="text-sm font-semibold" style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}>
+          Account
+        </span>
+      </div>
+      {me ? (
+        <>
+          <p className="mb-3 text-sm" style={{ color: 'var(--dp-text-secondary)' }}>
+            Signed in with Discord. Your unlocked palettes sync to this account across devices.
+          </p>
+          <dl className="mb-3 text-sm" style={{ color: 'var(--dp-text-secondary)' }}>
+            <div className="flex justify-between py-1">
+              <dt>Discord</dt>
+              <dd style={{ color: 'var(--dp-text)' }}>{me.username ?? me.discord_id}</dd>
+            </div>
+          </dl>
+          <button className="dp-toggle-btn" disabled={busy} onClick={onLogout}>
+            {busy ? 'Signing out...' : 'Logout'}
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="mb-3 text-sm" style={{ color: 'var(--dp-text-secondary)' }}>
+            Optional. Sign in to sync unlocked palettes and save connections to ap-pie.com.
+            Logged out, everything stays on this device.
+          </p>
+          <button className="dp-btn dp-btn-primary" onClick={login}>
+            Login with Discord
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SettingsView({
   slotName,
   mcDifficulty,
@@ -353,6 +431,7 @@ function SettingsView({
         </p>
         <PaletteSwitcher />
       </div>
+      <AccountSettings />
       <DifficultySettings value={mcDifficulty} onChange={setMcDifficulty} locked={modeLocked} />
       <SpriteSettings />
       <div className="dp-card p-5">

@@ -16,3 +16,12 @@ dist-ssr/
 tools/sprites-src/
 tools/out/
 public/cutouts/
+
+# Python backend
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+backend/.env

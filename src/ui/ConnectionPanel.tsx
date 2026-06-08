@@ -1,8 +1,17 @@
-import { useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useGame } from '../game/context';
+import { useAuth } from '../api/useAuth';
+import {
+  getConnections,
+  createConnection,
+  getConnectionSecret,
+  type SavedConnection,
+} from '../api/backend';
 
 // Connection form. localStorage holds ONLY these connection details + prefs
-// (ADR-0002) — never game state.
+// (ADR-0002) — never game state. When the user is logged in, saved connections
+// from the backend appear as quick-pick chips and can be saved; logged out, the
+// form behaves exactly as before (localStorage only).
 const LS_KEY = 'digipelago:lastConnection';
 
 interface Saved {
@@ -23,12 +32,54 @@ function loadSaved(): Saved {
 
 export function ConnectionPanel() {
   const { connect, connectionError } = useGame();
+  const { me } = useAuth();
   const init = loadSaved();
   const [hostname, setHostname] = useState(init.hostname);
   const [port, setPort] = useState(init.port);
   const [slotName, setSlotName] = useState(init.slotName);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Logged-in extras: saved-connection chips + a "store my password" opt-in.
+  const [saved, setSaved] = useState<SavedConnection[]>([]);
+  const [storePassword, setStorePassword] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+
+  const refreshSaved = useCallback(async () => {
+    if (!me) {
+      setSaved([]);
+      return;
+    }
+    try {
+      setSaved(await getConnections());
+    } catch {
+      setSaved([]);
+    }
+  }, [me]);
+
+  useEffect(() => {
+    void refreshSaved();
+  }, [refreshSaved]);
+
+  // Fill the form from a saved connection chip. Pulls the decrypted password
+  // only when one is stored, so the user does not have to retype it.
+  const pickSaved = async (conn: SavedConnection) => {
+    setHostname(conn.server);
+    setPort(String(conn.port));
+    setSlotName(conn.slot_name);
+    setSaveNote(null);
+    if (conn.has_password) {
+      try {
+        const secret = await getConnectionSecret(conn.id);
+        setPassword(secret ?? '');
+      } catch {
+        setPassword('');
+      }
+    } else {
+      setPassword('');
+    }
+  };
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -47,12 +98,57 @@ export function ConnectionPanel() {
     }
   };
 
+  // Save the current form as a backend connection (login required). The password
+  // is only sent when the opt-in checkbox is ticked.
+  const onSave = async () => {
+    if (!me) return;
+    setSaveBusy(true);
+    setSaveNote(null);
+    try {
+      await createConnection({
+        label: slotName || hostname,
+        server: hostname,
+        port: Number(port),
+        slot_name: slotName,
+        password: storePassword && password ? password : undefined,
+      });
+      setSaveNote('Saved to your account.');
+      await refreshSaved();
+    } catch {
+      setSaveNote('Could not save. Check the fields and try again.');
+    } finally {
+      setSaveBusy(false);
+    }
+  };
+
   return (
     <form className="dp-panel p-5 max-w-xl w-full mx-auto" onSubmit={onSubmit}>
       <h2 className="text-base font-bold mb-1">Connect to Archipelago</h2>
       <p className="text-sm mb-4" style={{ color: 'var(--dp-text-secondary)' }}>
         Enter your multiworld server and slot to start catching.
       </p>
+
+      {me && saved.length > 0 && (
+        <div className="mb-4">
+          <span className="mb-1.5 block text-xs font-semibold" style={{ color: 'var(--dp-text-faint)' }}>
+            Saved connections
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {saved.map((conn) => (
+              <button
+                key={conn.id}
+                type="button"
+                className="dp-toggle-btn text-xs"
+                onClick={() => void pickSaved(conn)}
+                title={`${conn.server}:${conn.port} (${conn.slot_name})`}
+              >
+                {conn.label || conn.slot_name || conn.server}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col gap-2.5">
         <div className="flex gap-2">
           <input className="dp-input flex-[2]" aria-label="Host" value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="host" />
@@ -61,9 +157,37 @@ export function ConnectionPanel() {
         <input className="dp-input" aria-label="Slot name" value={slotName} onChange={(e) => setSlotName(e.target.value)} placeholder="slot name" />
         <input className="dp-input" aria-label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password (optional)" />
         <button className="dp-btn dp-btn-primary py-2 text-sm" type="submit" disabled={busy || !slotName || !hostname || !port}>
-          {busy ? 'Connecting…' : 'Connect'}
+          {busy ? 'Connecting...' : 'Connect'}
         </button>
       </div>
+
+      {me && (
+        <div className="mt-4 border-t pt-3" style={{ borderColor: 'var(--dp-line)' }}>
+          <label className="flex items-start gap-2 text-xs" style={{ color: 'var(--dp-text-secondary)' }}>
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={storePassword}
+              onChange={(e) => setStorePassword(e.target.checked)}
+            />
+            <span>Let ap-pie.com store my room password (encrypted)</span>
+          </label>
+          <button
+            type="button"
+            className="dp-toggle-btn mt-2.5 text-sm"
+            onClick={() => void onSave()}
+            disabled={saveBusy || !slotName || !hostname || !port}
+          >
+            {saveBusy ? 'Saving...' : 'Save this connection'}
+          </button>
+          {saveNote && (
+            <p className="mt-2 text-xs" style={{ color: 'var(--dp-text-faint)' }}>
+              {saveNote}
+            </p>
+          )}
+        </div>
+      )}
+
       <p className="mt-3 text-xs" style={{ color: 'var(--dp-text-faint)' }}>
         This page is served over HTTPS, so it can only reach secure (wss) Archipelago servers, like
         archipelago.gg. A plain unencrypted server only works at localhost.
