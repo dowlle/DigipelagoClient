@@ -9,7 +9,6 @@ RUN npm ci
 # Source needed by the build (tsc -b + vite build + check:dashes).
 COPY tsconfig.json vite.config.ts index.html ./
 COPY src ./src
-COPY public ./public
 COPY tools ./tools
 RUN npm run build
 
