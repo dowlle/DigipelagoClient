@@ -32,7 +32,7 @@ function loadSaved(): Saved {
 
 export function ConnectionPanel() {
   const { connect, connectionError } = useGame();
-  const { me } = useAuth();
+  const { me, login, logout } = useAuth();
   const init = loadSaved();
   const [hostname, setHostname] = useState(init.hostname);
   const [port, setPort] = useState(init.port);
@@ -127,6 +127,30 @@ export function ConnectionPanel() {
       <p className="text-sm mb-4" style={{ color: 'var(--dp-text-secondary)' }}>
         Enter your multiworld server and slot to start catching.
       </p>
+
+      {/* Account: optional Discord login, available BEFORE connecting so saved
+          connections + theme sync can load up front (logged-out play is unchanged). */}
+      <div className="mb-4 border-b pb-4" style={{ borderColor: 'var(--dp-line)' }}>
+        {me ? (
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <span style={{ color: 'var(--dp-text-secondary)' }}>
+              Logged in as <span style={{ color: 'var(--dp-text)' }}>{me.username || 'your account'}</span>
+            </span>
+            <button type="button" className="dp-toggle-btn text-xs" onClick={() => void logout()}>
+              Log out
+            </button>
+          </div>
+        ) : (
+          <>
+            <button type="button" className="dp-btn dp-btn-primary py-2 text-sm w-full" onClick={() => login()}>
+              Log in with Discord
+            </button>
+            <p className="mt-1.5 text-xs" style={{ color: 'var(--dp-text-faint)' }}>
+              Optional. Syncs your unlocked themes and saved connections across devices. You can play without it.
+            </p>
+          </>
+        )}
+      </div>
 
       {me && saved.length > 0 && (
         <div className="mb-4">
