@@ -449,6 +449,26 @@ function SettingsView({
           </div>
         </dl>
       </div>
+      <div className="dp-card p-5">
+        <span className="mb-2 block text-sm font-semibold" style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}>
+          About
+        </span>
+        <p className="text-xs" style={{ color: 'var(--dp-text-secondary)' }}>
+          Digipelago is an unofficial, non-commercial fan project. Digimon is the property of its
+          respective owners; no Digimon artwork is hosted by this site.
+        </p>
+        <p className="mt-2 text-xs" style={{ color: 'var(--dp-text-faint)' }}>
+          Source (AGPL-3.0):{' '}
+          <a
+            href="https://github.com/dowlle/DigipelagoClient"
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: 'var(--dp-primary)' }}
+          >
+            github.com/dowlle/DigipelagoClient
+          </a>
+        </p>
+      </div>
     </div>
   );
 }

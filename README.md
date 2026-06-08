@@ -1,54 +1,48 @@
-# DigipelagoClient
+# Digipelago — client
 
-The web client for **Digipelago** — a Digimon guessing-game randomizer for Archipelago
-(Digimon counterpart to PokepelagoClient). Non-commercial fan project. Forked in spirit
-from `D:\pythonProjects\PokepelagoClient\`.
+The web client for **Digipelago**, a Digimon guessing game for the Archipelago
+Multiworld Randomizer (the Digimon counterpart to Pokepelago). Unofficial,
+non-commercial fan project.
 
-**Design & decisions live in the vault:** `F:\Vaults\stefappelhof\11-Dev\Digipelago\`.
+The multiworld feeds you items that widen what you can guess; you catch Digimon by
+naming them (free-text, hard-mode clues, or a "name the silhouette" multiple-choice
+mode), and each correct catch checks an Archipelago location. Logged-out play works
+entirely from `localStorage`; an optional Discord login (shared across the ap-pie
+family) syncs unlocked palette themes and saved connections.
 
-## Status — foundation (Phase 1 client kickoff)
+The matching Archipelago world (the APWorld) lives in a separate repository.
 
-The **domain core is in place and unit-tested**; the React UI is a placeholder.
+## Tech
 
-```
-src/
-  data/
-    digimon_mvp.json   pinned reference dataset (bundled, version-gated)
-    dataset.ts         loads it -> typed Dataset; DATASET_VERSION; isRoot/priorsOf
-  game/
-    types.ts           Digimon / Dataset / SlotData / GameState
-    guess.ts           guessable() + capacity/tier/goalProgress (pure, mirrors the apworld)
-    state.ts           reconstruct GameState from AP (item NAMES + caught set) + drift guard
-    guess.test.ts      vitest: dataset integrity, guessable gates, goal progress, version guard
-  App.tsx / main.tsx   placeholder shell
-```
-
-### Key design choices
-
-- **Decode by item NAME, not ID offsets** — `archipelago.js` resolves received items to
-  names, so `summarizeReceived` just counts `"Digivolution"` / `"DigiStorage Upgrade"` /
-  `"<Attr> Key"`. Avoids Pokepelago's BUG-12 ID-offset drift class entirely.
-- **`guessable()` is strictly stronger than the apworld's `can_catch_n`** (it adds
-  digivolution-line ordering via `priors.some(caught)`), so the client can never exceed AP
-  logic.
-- **State is server-reconstructable** (ADR-0002): items → capacity/tier/attributes,
-  checked slots → caughtCount, AP DataStorage → caught identity. localStorage will hold
-  only connection details + prefs.
-- **`dataset_version` guard** — `assertDatasetMatches` refuses to run a seed whose
-  `slot_data.dataset_version` doesn't match the bundled dataset.
-
-## Install & test
-
-Dependencies are pinned (no `^`/`~`). Audit, then:
+React 19 + TypeScript + Vite + Tailwind v4 on the front end; a small Flask + Postgres
+backend (`backend/`) provides Discord SSO, theme/connection sync, and anonymous gameplay
+telemetry. The same image serves the built SPA and the API.
 
 ```
-npm install
-npm run test:run     # vitest — domain logic
-npm run dev          # placeholder UI
+npm install        # dependencies are pinned (no ^/~); audit before installing
+npm run test:run   # vitest — domain + game logic
+npm run dev        # local dev server
+npm run build      # type-check + dash guard + production build
 ```
 
-## Next
+## License
 
-Connection manager (archipelago.js), `onConnected`/`onItemsReceived` wiring + DataStorage
-caught-set, the DexGrid + guess input (free-text and multiple-choice w/ regenerating
-wrong-pick meter), clue feedback (level/attribute/type/field/year/X-Antibody), sprites.
+This project's own source code is licensed under the **GNU Affero General Public
+License v3.0 or later (AGPL-3.0-or-later)** — see `LICENSE`. Because the AGPL covers
+network use, any modified version run as a hosted service must offer its source to its
+users; the live deployment links back to this repository for that reason.
+
+Copyright (C) 2026 Dowlle.
+
+## Fan project disclaimer
+
+Digipelago is an unofficial, non-commercial fan project. Digimon and all related names,
+characters, and media are trademarks and copyright of Bandai, Toei Animation, and their
+respective owners. This project is not affiliated with, endorsed by, or sponsored by any
+of them.
+
+Digimon data is sourced from [Digi-API](https://digi-api.com/) (which draws on Wikimon).
+**No copyrighted Digimon artwork is hosted or distributed by this project** — sprites are
+fetched on the player's own device, only with explicit consent, and cached locally. The
+AGPL license covers this repository's own code only, not any Digimon names, data, or
+media, which remain the property of their respective owners.
