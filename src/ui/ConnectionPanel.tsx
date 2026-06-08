@@ -64,6 +64,10 @@ export function ConnectionPanel() {
           {busy ? 'Connecting…' : 'Connect'}
         </button>
       </div>
+      <p className="mt-3 text-xs" style={{ color: 'var(--dp-text-faint)' }}>
+        This page is served over HTTPS, so it can only reach secure (wss) Archipelago servers, like
+        archipelago.gg. A plain unencrypted server only works at localhost.
+      </p>
       {connectionError && <p className="mt-3 text-sm font-semibold text-red-400">✗ {connectionError}</p>}
     </form>
   );

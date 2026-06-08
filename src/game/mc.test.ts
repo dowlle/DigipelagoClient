@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { dataset, isRoot } from '../data/dataset';
 import { buildState } from './state';
-import { buildChoices, guessableTargets, pickTarget, type Rng } from './mc';
+import { buildChoices, guessableTargets, pickTarget, variantBase, type Rng } from './mc';
 import type { GameState, SlotData } from './types';
 
 const SLOT: SlotData = {
@@ -64,9 +64,39 @@ describe('buildChoices', () => {
     expect(choices.some((d) => d.id === target.id)).toBe(true);
   });
 
-  it('prefers same-level distractors when enough exist', () => {
+  it('prefers same-level distractors when enough exist (normal default)', () => {
     const choices = buildChoices(target, entries, 4, seq([0.42]));
     const distractors = choices.filter((d) => d.id !== target.id);
     expect(distractors.every((d) => d.level === target.level)).toBe(true);
+  });
+});
+
+describe('variantBase', () => {
+  it('groups space-separated modifier variants by the family tail', () => {
+    expect(variantBase('Agumon')).toBe('agumon');
+    expect(variantBase('Toy Agumon')).toBe('agumon');
+    expect(variantBase('Metal Greymon')).toBe('greymon');
+  });
+});
+
+describe('buildChoices difficulty (FEAT-01)', () => {
+  const byName = (n: string) => entries.find((d) => d.name === n)!;
+
+  it('hard fills distractors with same-base variants when available', () => {
+    const t = byName('Agumon');
+    expect(t).toBeTruthy();
+    const base = variantBase(t.name);
+    const available = entries.filter((d) => d.id !== t.id && variantBase(d.name) === base).length;
+    const choices = buildChoices(t, entries, 4, seq([0.1, 0.5, 0.3, 0.7, 0.2, 0.9, 0.4]), 'hard');
+    const sameBase = choices.filter((d) => d.id !== t.id && variantBase(d.name) === base);
+    expect(sameBase.length).toBe(Math.min(3, available));
+  });
+
+  it('easy still returns n unique options including the target', () => {
+    const t = byName('Agumon');
+    const choices = buildChoices(t, entries, 4, seq([0.2, 0.4, 0.6, 0.8, 0.1, 0.3]), 'easy');
+    expect(choices).toHaveLength(4);
+    expect(new Set(choices.map((d) => d.id)).size).toBe(4);
+    expect(choices.some((d) => d.id === t.id)).toBe(true);
   });
 });

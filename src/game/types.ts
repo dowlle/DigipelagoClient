@@ -35,9 +35,12 @@ export interface SlotData {
   goal_count: number;
   starting_attribute: string;
   // Client input-mode lock (client-side only, never gates AP). Older seeds omit
-  // these, so all three are optional and the client falls back to free choice.
-  starting_mode?: 'free_text' | 'free_text_hard' | 'silhouette';
+  // these, so all are optional and the client falls back to free choice.
+  // 'mixed' = roll typed-silhouette vs multiple-choice per round (shown as "Random").
+  starting_mode?: 'free_text' | 'free_text_hard' | 'silhouette' | 'mixed';
   allow_mode_switch?: boolean;
+  // Silhouette distractor difficulty (client-side only). Omitted by older seeds.
+  mc_difficulty?: 'easy' | 'normal' | 'hard';
   starting_stamina?: number;        // base silhouette Stamina-bar max
   stamina_regen_seconds?: number;   // seconds to regen one Stamina point (0 = free guesses)
   level_tier: Record<string, number>;

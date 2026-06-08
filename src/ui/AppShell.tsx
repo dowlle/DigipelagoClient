@@ -13,6 +13,7 @@ import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette, Lock, Image as
 import { useGame } from '../game/context';
 import { useFeed, type FeedRow } from '../ap/feed';
 import { getDigimon } from '../data/dataset';
+import type { McDifficulty } from '../game/mc';
 import { PaletteSwitcher } from './PaletteSwitcher';
 import { ConnectionPanel } from './ConnectionPanel';
 import { FreeTextPanel } from './FreeTextPanel';
@@ -29,7 +30,7 @@ import { FOODS, FOOD_REFILL } from '../game/food';
 import { setSpriteConsent, useSpriteConsent } from './spriteConsent';
 
 export type View = 'play' | 'dex' | 'multiworld' | 'settings';
-type Mode = 'text' | 'mc';
+type Mode = 'text' | 'mc' | 'random';
 
 const LS_CONN = 'digipelago:lastConnection';
 
@@ -223,6 +224,15 @@ function ModeTabs({ mode, setMode, locked }: { mode: Mode; setMode: (m: Mode) =>
       >
         Silhouette
       </button>
+      <button
+        className="dp-toggle-btn"
+        data-active={mode === 'random'}
+        disabled={locked}
+        onClick={() => !locked && setMode('random')}
+        title="Each round randomly rolls type-the-name or multiple-choice"
+      >
+        Random
+      </button>
       {locked && (
         <span
           className="ml-1 inline-flex items-center gap-1 text-[11px]"
@@ -263,7 +273,68 @@ function SpriteSettings() {
   );
 }
 
-function SettingsView({ slotName }: { slotName: string | null }) {
+const DIFFICULTY_OPTS: { value: McDifficulty; label: string; hint: string }[] = [
+  { value: 'easy', label: 'Easy', hint: 'distractors from anywhere' },
+  { value: 'normal', label: 'Normal', hint: 'same-level distractors' },
+  { value: 'hard', label: 'Hard', hint: 'same-base variants' },
+];
+
+function DifficultySettings({
+  value,
+  onChange,
+  locked,
+}: {
+  value: McDifficulty;
+  onChange: (v: McDifficulty) => void;
+  locked: boolean;
+}) {
+  return (
+    <div className="dp-card p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <Grid3x3 size={16} style={{ color: 'var(--dp-primary)' }} aria-hidden />
+        <span className="text-sm font-semibold" style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}>
+          Silhouette difficulty
+        </span>
+      </div>
+      <p className="mb-3 text-sm" style={{ color: 'var(--dp-text-secondary)' }}>
+        How hard the wrong multiple-choice options are to tell apart. Affects Silhouette and
+        Random modes only; never changes what is beatable.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {DIFFICULTY_OPTS.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            className="dp-toggle-btn"
+            data-active={value === o.value}
+            disabled={locked}
+            onClick={() => !locked && onChange(o.value)}
+            title={o.hint}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {locked && (
+        <p className="mt-2 inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--dp-text-faint)' }}>
+          <Lock size={11} aria-hidden /> locked by seed
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SettingsView({
+  slotName,
+  mcDifficulty,
+  setMcDifficulty,
+  modeLocked,
+}: {
+  slotName: string | null;
+  mcDifficulty: McDifficulty;
+  setMcDifficulty: (v: McDifficulty) => void;
+  modeLocked: boolean;
+}) {
   const addr = savedAddress();
   return (
     <div className="flex flex-col gap-4">
@@ -282,6 +353,7 @@ function SettingsView({ slotName }: { slotName: string | null }) {
         </p>
         <PaletteSwitcher />
       </div>
+      <DifficultySettings value={mcDifficulty} onChange={setMcDifficulty} locked={modeLocked} />
       <SpriteSettings />
       <div className="dp-card p-5">
         <span className="mb-2 block text-sm font-semibold" style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}>
@@ -309,20 +381,25 @@ export function AppShell() {
   // Hard-mode (clue) toggle is lifted here so the seed can set/lock it (it used to
   // live inside FreeTextPanel). 'free_text_hard' = mode 'text' + hard true.
   const [hard, setHard] = useState(false);
+  // Silhouette distractor difficulty (FEAT-01): seed sets the default, the player
+  // can retune it in Settings unless the seed locked modes.
+  const [mcDifficulty, setMcDifficulty] = useState<McDifficulty>('normal');
   const connected = isConnected && slotData;
 
-  // Apply the seed's starting input mode once, when slot_data first arrives.
-  // Older seeds omit starting_mode, so we leave the client's free-choice default.
+  // Apply the seed's starting input mode + difficulty once, when slot_data first
+  // arrives. Older seeds omit these, so we leave the client's free-choice defaults.
   const modeInited = useRef(false);
   useEffect(() => {
     if (modeInited.current || !slotData) return;
     modeInited.current = true;
     switch (slotData.starting_mode) {
       case 'silhouette': setMode('mc'); setHard(false); break;
+      case 'mixed': setMode('random'); setHard(false); break;
       case 'free_text_hard': setMode('text'); setHard(true); break;
       case 'free_text': setMode('text'); setHard(false); break;
       default: break; // undefined: keep free-choice defaults
     }
+    if (slotData.mc_difficulty) setMcDifficulty(slotData.mc_difficulty);
   }, [slotData]);
 
   // Lock is advisory/client-side: the seed can set allow_mode_switch:false to fix
@@ -422,7 +499,13 @@ export function AppShell() {
         <ModeTabs mode={mode} setMode={setMode} locked={modeLocked} />
         {mode === 'text'
           ? <FreeTextPanel hard={hard} setHard={setHard} locked={modeLocked} />
-          : <MultipleChoice meter={mcMeter} foodAvailable={foodAvailable} onEat={eatFoodItem} />}
+          : <MultipleChoice
+              meter={mcMeter}
+              foodAvailable={foodAvailable}
+              onEat={eatFoodItem}
+              difficulty={mcDifficulty}
+              random={mode === 'random'}
+            />}
       </div>
     );
   } else if (view === 'dex') {
@@ -430,7 +513,14 @@ export function AppShell() {
   } else if (view === 'multiworld') {
     main = <FullFeed rows={feedRows} seats={seats} now={now} />;
   } else {
-    main = <SettingsView slotName={slot} />;
+    main = (
+      <SettingsView
+        slotName={slot}
+        mcDifficulty={mcDifficulty}
+        setMcDifficulty={setMcDifficulty}
+        modeLocked={modeLocked}
+      />
+    );
   }
 
   return (

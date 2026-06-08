@@ -22,7 +22,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Heart, Drumstick } from 'lucide-react';
 import { dataset } from '../data/dataset';
 import { useGame } from '../game/context';
-import { buildChoices, guessableTargets, pickTarget } from '../game/mc';
+import { buildChoices, guessableTargets, pickTarget, type McDifficulty } from '../game/mc';
+import { findByName, normalizeName } from '../game/match';
 import { FOODS } from '../game/food';
 import type { Digimon } from '../game/types';
 import type { WrongPickMeter } from './useWrongPickMeter';
@@ -39,14 +40,21 @@ type OptionState = 'idle' | 'wrong' | 'correct' | 'dim';
 // The wrong-pick meter is owned by AppShell (which stays mounted while connected)
 // and passed in, so its charges persist across mode/view switches — you can't
 // dodge the penalty by toggling to Free-text and back.
+//
+// `difficulty` (FEAT-01) tunes how confusable the multiple-choice distractors are.
+// `random` (FEAT-02) makes each round roll typed-silhouette vs multiple-choice.
 export function MultipleChoice({
   meter,
   foodAvailable,
   onEat,
+  difficulty = 'normal',
+  random = false,
 }: {
   meter: WrongPickMeter;
   foodAvailable: Record<string, number>;
   onEat: (item: string) => void;
+  difficulty?: McDifficulty;
+  random?: boolean;
 }) {
   const { slotData, state, catchDigimon } = useGame();
   const spriteConsent = useSpriteConsent();
@@ -56,6 +64,11 @@ export function MultipleChoice({
   const [revealed, setRevealed] = useState(false);
   // Presentation-only: which option ids the player has wrong-picked this round.
   const [wrongPicks, setWrongPicks] = useState<Set<number>>(() => new Set());
+  // Which input this round uses: 'mc' = pick from options, 'typed' = name it (FEAT-02).
+  // Always 'mc' unless `random` is on, in which case it is rolled per round.
+  const [roundInput, setRoundInput] = useState<'mc' | 'typed'>('mc');
+  const [typed, setTyped] = useState('');
+  const [typedFeedback, setTypedFeedback] = useState<'wrong' | 'unknown' | null>(null);
 
   const startRound = useCallback(() => {
     if (!slotData) return;
@@ -65,11 +78,15 @@ export function MultipleChoice({
       setChoices([]);
       return;
     }
+    const input: 'mc' | 'typed' = random && Math.random() < 0.5 ? 'typed' : 'mc';
+    setRoundInput(input);
     setTarget(t);
-    setChoices(buildChoices(t, allEntries, NUM_CHOICES));
+    setChoices(input === 'mc' ? buildChoices(t, allEntries, NUM_CHOICES, Math.random, difficulty) : []);
     setRevealed(false);
     setWrongPicks(new Set());
-  }, [slotData, state, allEntries]);
+    setTyped('');
+    setTypedFeedback(null);
+  }, [slotData, state, allEntries, random, difficulty]);
 
   useEffect(() => {
     if (!target) startRound();
@@ -86,16 +103,45 @@ export function MultipleChoice({
     );
   }
 
+  // Shared success path: reveal the sprite, check the AP location, queue next round.
+  const solve = (id: number) => {
+    setRevealed(true);
+    catchDigimon(id);
+    window.setTimeout(() => setTarget(null), REVEAL_MS);
+  };
+
   const handlePick = (choice: Digimon) => {
     if (revealed || meter.blocked || !target) return;
     if (choice.id === target.id) {
-      setRevealed(true);
-      catchDigimon(target.id);
-      window.setTimeout(() => setTarget(null), REVEAL_MS);
+      solve(target.id);
     } else if (!wrongPicks.has(choice.id)) {
       setWrongPicks((s) => new Set(s).add(choice.id));
       meter.registerWrong();
     }
+  };
+
+  // Typed-silhouette round (FEAT-02): match the typed name against the target.
+  // A wrong guess that is still a real Digimon costs Stamina (same weight as a
+  // wrong MC pick); gibberish that names no Digimon is free (just a nudge), so a
+  // typo never drains the meter.
+  const submitTyped = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (revealed || meter.blocked || !target) return;
+    const guess = normalizeName(typed);
+    if (!guess) return;
+    if (guess === normalizeName(target.name)) {
+      solve(target.id);
+      setTyped('');
+      setTypedFeedback(null);
+      return;
+    }
+    if (findByName(typed, allEntries)) {
+      setTypedFeedback('wrong');
+      meter.registerWrong();
+    } else {
+      setTypedFeedback('unknown');
+    }
+    setTyped('');
   };
 
   const optionState = (c: Digimon): OptionState => {
@@ -203,22 +249,37 @@ export function MultipleChoice({
               Name the silhouette
             </h2>
             <p className="mb-4 text-[13px]" style={{ color: 'var(--dp-text-mid)' }}>
-              Pick the name. Wrong picks cost Stamina, but it refills over time (or eat food), so you can&apos;t get stuck.
+              {roundInput === 'typed'
+                ? 'Type its name. Naming a different real Digimon costs Stamina (it refills over time, or eat food); a non-name is free.'
+                : "Pick the name. Wrong picks cost Stamina, but it refills over time (or eat food), so you can't get stuck."}
             </p>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {choices.map((c, i) => (
-                <OptionBtn
-                  key={c.id}
-                  idx={i}
-                  label={c.name}
-                  attribute={c.attribute}
-                  state={optionState(c)}
-                  disabled={revealed || (meter.blocked && optionState(c) === 'idle')}
-                  onPick={() => handlePick(c)}
-                />
-              ))}
-            </div>
+            {roundInput === 'typed' ? (
+              <TypedGuess
+                value={typed}
+                onChange={(v) => {
+                  setTyped(v);
+                  setTypedFeedback(null);
+                }}
+                onSubmit={submitTyped}
+                feedback={typedFeedback}
+                disabled={revealed || meter.blocked}
+              />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {choices.map((c, i) => (
+                  <OptionBtn
+                    key={c.id}
+                    idx={i}
+                    label={c.name}
+                    attribute={c.attribute}
+                    state={optionState(c)}
+                    disabled={revealed || (meter.blocked && optionState(c) === 'idle')}
+                    onPick={() => handlePick(c)}
+                  />
+                ))}
+              </div>
+            )}
 
             <div className="mt-auto pt-4">
               {meter.blocked && !revealed ? (
@@ -237,7 +298,9 @@ export function MultipleChoice({
                   className="flex items-center gap-2 text-[12px]"
                   style={{ color: 'var(--dp-text-faint)', fontFamily: 'var(--dp-font-body)' }}
                 >
-                  Tip: the attribute dot under each name is a clue.
+                  {roundInput === 'typed'
+                    ? 'Tip: the silhouette shape is your only clue this round.'
+                    : 'Tip: the attribute dot under each name is a clue.'}
                 </div>
               )}
             </div>
@@ -416,6 +479,50 @@ function FoodBar({
         })}
       </div>
     </div>
+  );
+}
+
+// ── typed-silhouette input (FEAT-02 random rounds) ─────────────────────────
+function TypedGuess({
+  value,
+  onChange,
+  onSubmit,
+  feedback,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: (e: React.FormEvent) => void;
+  feedback: 'wrong' | 'unknown' | null;
+  disabled: boolean;
+}) {
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-2">
+      <div className="flex gap-2">
+        <input
+          className="dp-input flex-1"
+          aria-label="Digimon name"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="type the name"
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          disabled={disabled}
+        />
+        <button className="dp-btn dp-btn-primary px-5" type="submit" disabled={disabled || !value.trim()}>
+          Catch
+        </button>
+      </div>
+      <div className="min-h-[18px] text-[12px]" style={{ fontFamily: 'var(--dp-font-body)' }}>
+        {feedback === 'wrong' && (
+          <span style={{ color: 'var(--dp-bad)' }}>Not this one. That is a real Digimon, so it cost Stamina.</span>
+        )}
+        {feedback === 'unknown' && (
+          <span style={{ color: 'var(--dp-text-faint)' }}>No Digimon by that name. Try again, no Stamina lost.</span>
+        )}
+      </div>
+    </form>
   );
 }
 
