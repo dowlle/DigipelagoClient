@@ -11,12 +11,15 @@
 
 import type { GameState, SlotData } from './types';
 import { capacity, tierReached } from './guess';
+import { FOOD_REFILL } from './food';
 
 const ATTR_KEY_RE = /^(.+) Key$/;
 
 export interface ReceivedSummary {
   digivolutionCount: number;
   upgradeCount: number;
+  staminaUps: number;
+  foodReceived: Record<string, number>;
   heldAttributes: Set<string>;
 }
 
@@ -24,16 +27,20 @@ export interface ReceivedSummary {
 export function summarizeReceived(itemNames: Iterable<string>): ReceivedSummary {
   let digivolutionCount = 0;
   let upgradeCount = 0;
+  let staminaUps = 0;
+  const foodReceived: Record<string, number> = {};
   const heldAttributes = new Set<string>();
   for (const name of itemNames) {
     if (name === 'Digivolution') digivolutionCount += 1;
     else if (name === 'DigiStorage Upgrade') upgradeCount += 1;
+    else if (name === 'Stamina Up') staminaUps += 1;
+    else if (FOOD_REFILL[name] !== undefined) foodReceived[name] = (foodReceived[name] ?? 0) + 1;
     else {
       const m = ATTR_KEY_RE.exec(name);
       if (m) heldAttributes.add(m[1]);
     }
   }
-  return { digivolutionCount, upgradeCount, heldAttributes };
+  return { digivolutionCount, upgradeCount, staminaUps, foodReceived, heldAttributes };
 }
 
 /**
@@ -54,6 +61,8 @@ export function buildState(
     heldAttributes: r.heldAttributes,
     caught,
     caughtCount,
+    staminaUps: r.staminaUps,
+    foodReceived: r.foodReceived,
   };
 }
 

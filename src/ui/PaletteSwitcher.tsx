@@ -28,7 +28,7 @@ export function PaletteSwitcher() {
             disabled={!unlocked}
             data-active={active}
             onClick={() => setTheme(t.id)}
-            title={unlocked ? t.tagline : `${t.name} — locked (${t.tagline})`}
+            title={unlocked ? t.tagline : `${t.name}: locked (${t.tagline})`}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             style={{
               color: active ? 'var(--dp-on-primary)' : 'var(--dp-text-secondary)',

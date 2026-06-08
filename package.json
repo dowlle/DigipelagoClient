@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run check:dashes && tsc -b && vite build",
     "lint": "eslint .",
+    "check:dashes": "node tools/check-no-emdash.mjs",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",

@@ -45,17 +45,18 @@ function classify(d: Digimon, state: GameState, slotData: SlotData): DexEntry {
 }
 
 const Cell = memo(function Cell({ entry }: { entry: DexEntry }) {
-  const { d, cue, priorName } = entry;
+  const { d, cue } = entry;
   const ac = attrColor(d.attribute);
   const caught = cue === 'caught';
   const guess = cue === 'guessable';
   const prereq = cue === 'lockPrereq';
   const key = cue === 'lockKey';
 
+  // It's a guessing game: never reveal an un-caught Digimon's name (in the cell
+  // OR the tooltip). The prereq hint stays generic so it can't name a target.
+  const shownName = caught ? d.name : '???';
   const lockLabel = prereq
-    ? priorName
-      ? `Catch ${priorName} first`
-      : 'Catch a prior evolution first'
+    ? 'Catch its prior evolution first'
     : key
       ? 'Behind a key'
       : undefined;
@@ -92,7 +93,7 @@ const Cell = memo(function Cell({ entry }: { entry: DexEntry }) {
         opacity: key ? 0.72 : 1,
         transform: guess ? undefined : undefined,
       }}
-      title={`${d.name} · ${d.level} · ${d.attribute}${lockLabel ? ` · ${lockLabel}` : ''}`}
+      title={`${shownName} · ${d.level} · ${d.attribute}${lockLabel ? ` · ${lockLabel}` : ''}`}
     >
       <div className="flex-1 flex items-center justify-center">
         <Sprite
@@ -167,7 +168,9 @@ const Cell = memo(function Cell({ entry }: { entry: DexEntry }) {
           className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
           style={{ background: ac, opacity: caught ? 1 : 0.5 }}
         />
-        {d.name}
+        <span style={caught ? undefined : { color: 'var(--dp-text-faint)', letterSpacing: '0.08em' }}>
+          {shownName}
+        </span>
       </span>
     </div>
   );
@@ -259,7 +262,7 @@ function DexLegend() {
           </LegendSwatch>
         }
         title="Caught"
-        sub="Owned — full colour"
+        sub="Owned, full colour"
       />
       <LegendItem
         swatch={
@@ -274,7 +277,7 @@ function DexLegend() {
           </LegendSwatch>
         }
         title="Guessable now"
-        sub="Unlocked & catchable — glows"
+        sub="Unlocked & catchable, glows"
       />
       <div className="h-px" style={{ background: 'var(--dp-line)' }} />
       <div
@@ -317,7 +320,7 @@ function DexLegend() {
           </LegendSwatch>
         }
         title="Behind a catch"
-        sub="Family open — catch its predecessor first"
+        sub="Family open: catch its predecessor first"
       />
     </div>
   );

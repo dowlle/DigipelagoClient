@@ -42,6 +42,9 @@ function FeedRowView({ row, now, big = false }: { row: Row; now: number; big?: b
           />
           <span className={`font-semibold ${sz}`} style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}>
             You caught
+            {row.caughtName && (
+              <span style={{ color: 'var(--dp-primary)' }}> {row.caughtName}</span>
+            )}
           </span>
           {time}
         </div>
@@ -165,7 +168,7 @@ export function FullFeed({ rows, seats, now }: { rows: Row[]; seats: number; now
             Multiworld activity
           </h2>
           <p className="text-[13px]" style={{ color: 'var(--dp-text-mid)' }}>
-            Every catch, every item — where it came from, where it went.
+            Every catch, every item: where it came from, where it went.
           </p>
         </div>
         <SeatPill seats={seats} />

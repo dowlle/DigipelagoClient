@@ -1,22 +1,34 @@
-import { useState } from 'react';
 import { FreeTextGuess } from './FreeTextGuess';
 import { HardModeGuess } from './HardModeGuess';
 
 // Free-text mode with the optional hard-mode toggle (decision 2026-06-01):
 // default is pure catch-anything; the toggle switches to the hidden-target
 // clue game. Same underlying catch dispatch either way.
-export function FreeTextPanel() {
-  const [hard, setHard] = useState(false);
+//
+// The hard state is owned by AppShell so the seed can set it as the starting mode
+// and lock it (`allow_mode_switch: false`); when locked the toggle is disabled.
+export function FreeTextPanel({
+  hard,
+  setHard,
+  locked,
+}: {
+  hard: boolean;
+  setHard: (v: boolean) => void;
+  locked?: boolean;
+}) {
   return (
     <div className="dp-panel p-4">
-      <label className="inline-flex items-center gap-2 mb-3 cursor-pointer text-sm select-none">
+      <label
+        className={`inline-flex items-center gap-2 mb-3 text-sm select-none ${locked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+      >
         <input
           type="checkbox"
           checked={hard}
+          disabled={locked}
           onChange={(e) => setHard(e.target.checked)}
           className="w-4 h-4 accent-[var(--dp-accent)]"
         />
-        <span>Hard mode — identify the hidden Digimon from clues</span>
+        <span>Hard mode: identify the hidden Digimon from clues</span>
       </label>
       {hard ? <HardModeGuess /> : <FreeTextGuess />}
     </div>

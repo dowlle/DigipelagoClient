@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Client, Item } from 'archipelago.js';
+import { GAME_NAME, parseCatchSlot } from './locations';
 
 export type FeedKind = 'catch' | 'received' | 'capacity' | 'milestone';
 
@@ -29,6 +30,10 @@ export interface FeedRow {
   item?: string;
   /** Display: the other player involved (recipient for catch, sender for received). */
   player?: string;
+  /** catch: the 1-indexed Catch Slot #k this ship came from (for caught-name lookup). */
+  slot?: number;
+  /** catch: the Digimon you caught, resolved by the UI from slot ↔ caught order. */
+  caughtName?: string;
   /** capacity: +N delta and the new max. */
   by?: number;
   to?: number;
@@ -82,16 +87,22 @@ export function useFeed(
       });
     });
 
+    const pkg = client.package.findPackage(GAME_NAME);
     const onItemSent = (_text: string, item: Item) => {
       // Only YOUR finds, and only those shipped to another world (a real "catch").
       if (item.sender.slot !== selfSlot) return;
       if (item.receiver.slot === selfSlot) return; // your own progression, not a ship
+      // The location the item shipped FROM is a "Catch Slot #k" in your world; its
+      // k indexes the caught-identity order so the UI can name what you caught.
+      const locName = pkg?.reverseLocationTable[item.locationId];
+      const slot = locName ? parseCatchSlot(locName) ?? undefined : undefined;
       push({
         id: itemId('sent', item, 0),
         kind: 'catch',
         at: Date.now(),
         item: item.name,
         player: item.receiver.alias,
+        slot,
       });
     };
 

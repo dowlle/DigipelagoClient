@@ -18,7 +18,7 @@ export function entryStatus(d: Digimon, st: GameState, slot: SlotData): EntrySta
  * Checked in the same order as guessable() so the first failing gate is reported.
  */
 export function lockReason(d: Digimon, st: GameState, slot: SlotData): string | null {
-  if (st.caughtCount >= st.capacity) return 'DigiStorage full — need a capacity upgrade';
+  if (st.caughtCount >= st.capacity) return 'DigiStorage full, need a capacity upgrade';
   if (st.tierReached < slot.level_tier[d.level]) return `${d.level} not unlocked yet`;
   if (!st.heldAttributes.has(d.attribute)) return `Need the ${d.attribute} key`;
   if (!isRoot(d.id) && !priorsOf(d.id).some((p) => st.caught.has(p))) {

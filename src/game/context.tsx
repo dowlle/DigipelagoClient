@@ -24,6 +24,8 @@ const EMPTY_STATE: GameState = {
   heldAttributes: new Set(),
   caught: new Set(),
   caughtCount: 0,
+  staminaUps: 0,
+  foodReceived: {},
 };
 
 interface Identity {

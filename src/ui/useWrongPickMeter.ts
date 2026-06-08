@@ -1,56 +1,94 @@
 // Self-regenerating wrong-pick meter for multiple-choice mode. Each wrong pick
-// consumes one charge; charges regenerate on a timer, so a player can NEVER get
-// permanently stuck. Because it self-heals it is purely client-side and must
-// never gate AP progression (input mode never affects beatability — Game Design).
+// consumes one charge; charges regenerate SEQUENTIALLY, one dot every regenMs, so
+// a burst of wrong picks comes back one at a time (not all at once) and a player
+// can NEVER get permanently stuck. Because it self-heals it is purely client-side
+// and must never gate AP progression (input mode never affects beatability).
 //
-// Model: store the timestamps of wrong picks still "counting". A pick fully
-// regenerates regenMs after it happened. remaining = max − (still-counting picks).
-// One state value per pick, self-expiring — no per-tick mutation (the timer only
-// advances `now` so derived values recompute).
+// regenMs is seed-configurable (slot_data.tries_regen_seconds). regenMs <= 0 means
+// "free guesses": the meter never drains and never blocks.
+//
+// Model: `spent` = dots currently consumed; `nextRefillAt` = when the next single
+// dot comes back. remaining = max - spent, so a Tries Upgrade (raising max) adds a
+// filled dot for free. The refill effect catches up multiple dots if a lot of wall
+// time passed (e.g. a backgrounded tab or a multi-hour async regen).
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export interface WrongPickMeter {
   remaining: number;
   max: number;
   blocked: boolean;
-  /** Seconds until the next charge regenerates (0 when full). */
+  /** Seconds until the next single charge regenerates (0 when full or free-guess). */
   secondsToRegen: number;
+  /** The configured regen interval in ms (0 = free guesses). For UI progress fill. */
+  regenMs: number;
   registerWrong: () => void;
+  /** Instantly restore `amount` spent points (Infinity = full). Used by eating food. */
+  refill: (amount: number) => void;
+}
+
+interface MeterState {
+  spent: number;
+  nextRefillAt: number | null;
 }
 
 export function useWrongPickMeter(opts?: { max?: number; regenMs?: number }): WrongPickMeter {
   const max = opts?.max ?? 5;
   const regenMs = opts?.regenMs ?? 30_000;
+  const noPenalty = regenMs <= 0;
 
-  const [losses, setLosses] = useState<number[]>([]);
+  const [m, setM] = useState<MeterState>({ spent: 0, nextRefillAt: null });
   const [now, setNow] = useState(() => Date.now());
-  const nowRef = useRef(now);
-  nowRef.current = now;
 
-  // While any losses are counting, tick `now` so derived values self-expire.
+  // Tick once a second while a refill is pending so the countdown stays live.
   useEffect(() => {
-    if (losses.length === 0) return;
+    if (m.nextRefillAt === null) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [losses.length]);
+  }, [m.nextRefillAt]);
 
-  const active = useMemo(() => losses.filter((t) => now - t < regenMs), [losses, now, regenMs]);
+  // Process due refills: one dot per regenMs, sequential, catching up if needed.
+  useEffect(() => {
+    if (m.nextRefillAt === null || now < m.nextRefillAt) return;
+    setM((cur) => {
+      if (cur.nextRefillAt === null) return cur;
+      let spent = cur.spent;
+      let nextRefillAt: number | null = cur.nextRefillAt;
+      while (nextRefillAt !== null && now >= nextRefillAt && spent > 0) {
+        spent -= 1;
+        nextRefillAt = spent > 0 ? nextRefillAt + regenMs : null;
+      }
+      if (spent <= 0) nextRefillAt = null;
+      return { spent, nextRefillAt };
+    });
+  }, [now, m.nextRefillAt, regenMs]);
 
-  const remaining = Math.max(0, max - active.length);
-  const blocked = remaining <= 0;
-  const secondsToRegen = active.length
-    ? Math.max(0, Math.ceil((Math.min(...active.map((t) => t + regenMs)) - now) / 1000))
-    : 0;
+  const remaining = Math.max(0, max - m.spent);
+  const blocked = !noPenalty && remaining <= 0;
+  const secondsToRegen = m.nextRefillAt ? Math.max(0, Math.ceil((m.nextRefillAt - now) / 1000)) : 0;
 
   const registerWrong = useCallback(() => {
-    setLosses((prev) => {
-      const cur = prev.filter((t) => Date.now() - t < regenMs);
-      if (max - cur.length <= 0) return cur; // already blocked — don't stack penalties
-      return [...cur, Date.now()];
-    });
+    if (noPenalty) return; // free guesses: never drain
+    // Refresh `now` so the countdown label is correct on the very first frame
+    // (the 1s ticker only starts once a refill is pending).
     setNow(Date.now());
-  }, [max, regenMs]);
+    setM((cur) => {
+      if (cur.spent >= max) return cur; // already empty, don't over-spend
+      return {
+        spent: cur.spent + 1,
+        nextRefillAt: cur.nextRefillAt ?? Date.now() + regenMs, // start the queue if idle
+      };
+    });
+  }, [noPenalty, max, regenMs]);
 
-  return { remaining, max, blocked, secondsToRegen, registerWrong };
+  const refill = useCallback((amount: number) => {
+    if (amount <= 0) return;
+    setM((cur) => {
+      if (cur.spent <= 0) return cur;
+      const spent = Math.max(0, cur.spent - amount);
+      return { spent, nextRefillAt: spent > 0 ? cur.nextRefillAt : null };
+    });
+  }, []);
+
+  return { remaining, max, blocked, secondsToRegen, regenMs, registerWrong, refill };
 }

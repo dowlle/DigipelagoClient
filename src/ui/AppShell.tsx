@@ -8,10 +8,11 @@
 // Ports NavRail + the shell layout from hud-deep.jsx / hud-deep2.jsx, but
 // token-driven and fed by real context state.
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette, Lock } from 'lucide-react';
 import { useGame } from '../game/context';
-import { useFeed } from '../ap/feed';
+import { useFeed, type FeedRow } from '../ap/feed';
+import { getDigimon } from '../data/dataset';
 import { PaletteSwitcher } from './PaletteSwitcher';
 import { ConnectionPanel } from './ConnectionPanel';
 import { FreeTextPanel } from './FreeTextPanel';
@@ -22,6 +23,9 @@ import { FeedRail, FullFeed } from './Feed';
 import { CatchToast } from './moments/CatchToast';
 import { CapacityToast } from './moments/CapacityToast';
 import { useMoments } from './moments/useMoments';
+import { useWrongPickMeter } from './useWrongPickMeter';
+import { useFood } from './useFood';
+import { FOODS, FOOD_REFILL } from '../game/food';
 
 export type View = 'play' | 'dex' | 'multiworld' | 'settings';
 type Mode = 'text' | 'mc';
@@ -199,15 +203,34 @@ function MobileTabs({ view, setView }: { view: View; setView: (v: View) => void 
   );
 }
 
-function ModeTabs({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+function ModeTabs({ mode, setMode, locked }: { mode: Mode; setMode: (m: Mode) => void; locked?: boolean }) {
   return (
     <div className="flex items-center gap-2">
-      <button className="dp-toggle-btn" data-active={mode === 'text'} onClick={() => setMode('text')}>
+      <button
+        className="dp-toggle-btn"
+        data-active={mode === 'text'}
+        disabled={locked}
+        onClick={() => !locked && setMode('text')}
+      >
         Free-text
       </button>
-      <button className="dp-toggle-btn" data-active={mode === 'mc'} onClick={() => setMode('mc')}>
+      <button
+        className="dp-toggle-btn"
+        data-active={mode === 'mc'}
+        disabled={locked}
+        onClick={() => !locked && setMode('mc')}
+      >
         Silhouette
       </button>
+      {locked && (
+        <span
+          className="ml-1 inline-flex items-center gap-1 text-[11px]"
+          style={{ color: 'var(--dp-text-faint)', fontFamily: 'var(--dp-font-body)' }}
+          title="The seed locked this mode (allow_mode_switch: false)"
+        >
+          <Lock size={11} aria-hidden /> locked by seed
+        </span>
+      )}
     </div>
   );
 }
@@ -238,11 +261,11 @@ function SettingsView({ slotName }: { slotName: string | null }) {
         <dl className="text-sm" style={{ color: 'var(--dp-text-secondary)' }}>
           <div className="flex justify-between py-1">
             <dt>Slot</dt>
-            <dd style={{ color: 'var(--dp-text)' }}>{slotName ?? '—'}</dd>
+            <dd style={{ color: 'var(--dp-text)' }}>{slotName ?? '-'}</dd>
           </div>
           <div className="flex justify-between py-1">
             <dt>Server</dt>
-            <dd style={{ color: 'var(--dp-text)' }}>{addr ?? '—'}</dd>
+            <dd style={{ color: 'var(--dp-text)' }}>{addr ?? '-'}</dd>
           </div>
         </dl>
       </div>
@@ -254,17 +277,73 @@ export function AppShell() {
   const { isConnected, slotData, state, disconnect, clientRef } = useGame();
   const [view, setView] = useState<View>('play');
   const [mode, setMode] = useState<Mode>('text');
+  // Hard-mode (clue) toggle is lifted here so the seed can set/lock it (it used to
+  // live inside FreeTextPanel). 'free_text_hard' = mode 'text' + hard true.
+  const [hard, setHard] = useState(false);
   const connected = isConnected && slotData;
+
+  // Apply the seed's starting input mode once, when slot_data first arrives.
+  // Older seeds omit starting_mode, so we leave the client's free-choice default.
+  const modeInited = useRef(false);
+  useEffect(() => {
+    if (modeInited.current || !slotData) return;
+    modeInited.current = true;
+    switch (slotData.starting_mode) {
+      case 'silhouette': setMode('mc'); setHard(false); break;
+      case 'free_text_hard': setMode('text'); setHard(true); break;
+      case 'free_text': setMode('text'); setHard(false); break;
+      default: break; // undefined: keep free-choice defaults
+    }
+  }, [slotData]);
+
+  // Lock is advisory/client-side: the seed can set allow_mode_switch:false to fix
+  // the mode + hard toggle. Default (or older seeds) = free choice.
+  const modeLocked = slotData?.allow_mode_switch === false;
+
+  // Silhouette-mode Stamina meter, owned here so it survives switching between
+  // Free-text/Silhouette modes and between views (MultipleChoice unmounts).
+  // Max = seed's starting_stamina + every received "Stamina Up"; regen pace is
+  // seed-configured (stamina_regen_seconds; 0 = free guesses, default 30s/point).
+  const staminaMax = (slotData?.starting_stamina ?? 5) + state.staminaUps;
+  const staminaRegenMs = (slotData?.stamina_regen_seconds ?? 30) * 1000;
+  const mcMeter = useWrongPickMeter({ max: staminaMax, regenMs: staminaRegenMs });
+
+  // Food inventory: received counts come from GameState (AP item stream); eaten
+  // counts come from DataStorage via useFood. Eating refills Stamina instantly.
+  const foodInv = useFood(clientRef, isConnected);
+  const foodAvailable = useMemo(() => {
+    const avail: Record<string, number> = {};
+    for (const f of FOODS) {
+      avail[f.item] = Math.max(0, (state.foodReceived[f.item] ?? 0) - (foodInv.eaten[f.item] ?? 0));
+    }
+    return avail;
+  }, [state.foodReceived, foodInv.eaten]);
+  const eatFoodItem = (item: string) => {
+    if ((foodAvailable[item] ?? 0) <= 0) return;
+    if (mcMeter.remaining >= mcMeter.max) return; // already full, don't waste it
+    foodInv.eat(item);
+    mcMeter.refill(FOOD_REFILL[item] ?? 0);
+  };
 
   // Read-only multiworld streams (S5) → activity feed + moment toasts.
   const apRows = useFeed(clientRef, isConnected);
   const { catchMoment, capacityMoment, capacityRows } = useMoments(state, apRows);
 
-  // Merge AP rows with synthetic capacity beats, newest first.
-  const feedRows = useMemo(
-    () => [...apRows, ...capacityRows].sort((a, b) => b.at - a.at),
-    [apRows, capacityRows],
-  );
+  // Merge AP rows with synthetic capacity beats, newest first. Catch rows are
+  // enriched with the Digimon you caught: the feed stream only knows the shipped
+  // item + recipient, so we resolve identity via the stable Catch Slot #k ↔ k-th
+  // caught invariant (state.caught keeps catch order — see context.tsx).
+  const feedRows = useMemo(() => {
+    const order = [...state.caught];
+    const enrich = (r: FeedRow): FeedRow => {
+      if (r.kind === 'catch' && r.slot && r.slot >= 1 && r.slot <= order.length) {
+        const mon = getDigimon(order[r.slot - 1]);
+        if (mon) return { ...r, caughtName: mon.name };
+      }
+      return r;
+    };
+    return [...apRows.map(enrich), ...capacityRows].sort((a, b) => b.at - a.at);
+  }, [apRows, capacityRows, state.caught]);
 
   // Live seat count from the room (peers in our team); falls back to 1.
   const seats = useMemo(() => {
@@ -311,8 +390,10 @@ export function AppShell() {
     main = (
       <div className="flex flex-col gap-4">
         <StatusCards state={state} slotData={slotData} bump={capBump} />
-        <ModeTabs mode={mode} setMode={setMode} />
-        {mode === 'text' ? <FreeTextPanel /> : <MultipleChoice />}
+        <ModeTabs mode={mode} setMode={setMode} locked={modeLocked} />
+        {mode === 'text'
+          ? <FreeTextPanel hard={hard} setHard={setHard} locked={modeLocked} />
+          : <MultipleChoice meter={mcMeter} foodAvailable={foodAvailable} onEat={eatFoodItem} />}
       </div>
     );
   } else if (view === 'dex') {

@@ -34,6 +34,12 @@ export interface SlotData {
   goal_level: string | null;
   goal_count: number;
   starting_attribute: string;
+  // Client input-mode lock (client-side only, never gates AP). Older seeds omit
+  // these, so all three are optional and the client falls back to free choice.
+  starting_mode?: 'free_text' | 'free_text_hard' | 'silhouette';
+  allow_mode_switch?: boolean;
+  starting_stamina?: number;        // base silhouette Stamina-bar max
+  stamina_regen_seconds?: number;   // seconds to regen one Stamina point (0 = free guesses)
   level_tier: Record<string, number>;
   attributes: string[];
   cell_counts: Record<string, number>;   // "Level|Attribute" -> count
@@ -48,4 +54,6 @@ export interface GameState {
   heldAttributes: Set<string>;
   caught: Set<number>;     // identity of caught Digimon (from DataStorage)
   caughtCount: number;     // = number of checked catch-slot locations
+  staminaUps: number;      // count of received "Stamina Up" items (raises Stamina max)
+  foodReceived: Record<string, number>; // received food item name -> count (eat to refill)
 }

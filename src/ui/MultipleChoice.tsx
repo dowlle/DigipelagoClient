@@ -19,25 +19,35 @@
 // Pokémon-anime line).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Heart } from 'lucide-react';
+import { Heart, Drumstick } from 'lucide-react';
 import { dataset } from '../data/dataset';
 import { useGame } from '../game/context';
 import { buildChoices, guessableTargets, pickTarget } from '../game/mc';
+import { FOODS } from '../game/food';
 import type { Digimon } from '../game/types';
-import { useWrongPickMeter } from './useWrongPickMeter';
+import type { WrongPickMeter } from './useWrongPickMeter';
 import { SpriteReveal } from './SpriteReveal';
 import { attrColor } from './attrColor';
 
 const NUM_CHOICES = 4;
 const REVEAL_MS = 1300;
-const REGEN_MS = 30_000; // mirror useWrongPickMeter's default (read-only, for the pip fill)
 
 type OptionState = 'idle' | 'wrong' | 'correct' | 'dim';
 
-export function MultipleChoice() {
+// The wrong-pick meter is owned by AppShell (which stays mounted while connected)
+// and passed in, so its charges persist across mode/view switches — you can't
+// dodge the penalty by toggling to Free-text and back.
+export function MultipleChoice({
+  meter,
+  foodAvailable,
+  onEat,
+}: {
+  meter: WrongPickMeter;
+  foodAvailable: Record<string, number>;
+  onEat: (item: string) => void;
+}) {
   const { slotData, state, catchDigimon } = useGame();
   const allEntries = useMemo(() => Object.values(dataset.meta), []);
-  const meter = useWrongPickMeter();
   const [target, setTarget] = useState<Digimon | null>(null);
   const [choices, setChoices] = useState<Digimon[]>([]);
   const [revealed, setRevealed] = useState(false);
@@ -84,22 +94,14 @@ export function MultipleChoice() {
 
   // Refill progress of the next pip, derived from the hook (additive read-only):
   // secondsToRegen counts down toward the next charge; map it to a 0..1 bar.
-  const progress = meter.secondsToRegen > 0
-    ? Math.min(1, Math.max(0, 1 - (meter.secondsToRegen * 1000) / REGEN_MS))
+  const progress = meter.secondsToRegen > 0 && meter.regenMs > 0
+    ? Math.min(1, Math.max(0, 1 - (meter.secondsToRegen * 1000) / meter.regenMs))
     : 0;
+  // Free guesses (regen 0): the Tries meter is meaningless, so hide it.
+  const showMeter = meter.regenMs > 0;
 
   return (
     <div className="dp-card overflow-hidden p-5">
-      {/* header: mode caption + tiny meter summary echo */}
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <span
-          className="text-[10px] font-medium uppercase tracking-[0.18em]"
-          style={{ color: 'var(--dp-text-faint)', fontFamily: 'var(--dp-font-body)' }}
-        >
-          Identify the silhouette
-        </span>
-      </div>
-
       {target ? (
         <div className="flex flex-col gap-6 lg:flex-row">
           {/* ── hero stage ── */}
@@ -162,23 +164,26 @@ export function MultipleChoice() {
                 )}
               </div>
             </div>
-            <TriesMeter
-              remaining={meter.remaining}
-              max={meter.max}
-              blocked={meter.blocked}
-              secondsToRegen={meter.secondsToRegen}
-              progress={progress}
-            />
+            {showMeter && (
+              <TriesMeter
+                remaining={meter.remaining}
+                max={meter.max}
+                blocked={meter.blocked}
+                secondsToRegen={meter.secondsToRegen}
+                progress={progress}
+              />
+            )}
+            {showMeter && (
+              <FoodBar
+                available={foodAvailable}
+                onEat={onEat}
+                full={meter.remaining >= meter.max}
+              />
+            )}
           </div>
 
           {/* ── prompt + options ── */}
           <div className="flex min-w-0 flex-1 flex-col">
-            <div
-              className="text-[10px] font-medium uppercase tracking-[0.15em]"
-              style={{ color: 'var(--dp-text-faint)', fontFamily: 'var(--dp-font-body)' }}
-            >
-              Identify the silhouette
-            </div>
             <h2
               className="mb-1 text-[22px] font-bold"
               style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}
@@ -186,7 +191,7 @@ export function MultipleChoice() {
               Name the silhouette
             </h2>
             <p className="mb-4 text-[13px]" style={{ color: 'var(--dp-text-mid)' }}>
-              Pick the name. Wrong picks cost a try — but tries come back, so you can&apos;t get stuck.
+              Pick the name. Wrong picks cost Stamina, but it refills over time (or eat food), so you can&apos;t get stuck.
             </p>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -213,7 +218,7 @@ export function MultipleChoice() {
                     className="hud-pulse h-1.5 w-1.5 rounded-full"
                     style={{ background: 'var(--dp-warn)' }}
                   />
-                  Out of tries — a pip refills in {meter.secondsToRegen}s. Take a breath.
+                  Out of Stamina. A point refills in {meter.secondsToRegen}s, or eat food to refill now.
                 </div>
               ) : (
                 <div
@@ -228,7 +233,7 @@ export function MultipleChoice() {
         </div>
       ) : (
         <p className="text-sm" style={{ color: 'var(--dp-text-mid)' }}>
-          No catchable Digimon right now — unlock more via the multiworld.
+          No catchable Digimon right now. Unlock more via the multiworld.
         </p>
       )}
     </div>
@@ -289,7 +294,7 @@ function TriesMeter({
           style={{ color: 'var(--dp-text-mid)', fontFamily: 'var(--dp-font-body)' }}
         >
           <Heart size={13} style={{ color: pipColor }} fill={blocked ? 'none' : pipColor} />
-          Tries
+          Stamina
         </span>
         <span
           className="flex items-center gap-1.5 text-[11px] font-semibold"
@@ -332,6 +337,69 @@ function TriesMeter({
                 />
               )}
             </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── food inventory — eat to refill Stamina (received via the multiworld) ─────
+function FoodBar({
+  available,
+  onEat,
+  full,
+}: {
+  available: Record<string, number>;
+  onEat: (item: string) => void;
+  full: boolean;
+}) {
+  const owned = FOODS.filter((f) => (available[f.item] ?? 0) > 0);
+  if (owned.length === 0) return null;
+  return (
+    <div className="mt-3">
+      <div
+        className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.1em]"
+        style={{ color: 'var(--dp-text-mid)', fontFamily: 'var(--dp-font-body)' }}
+      >
+        <Drumstick size={13} style={{ color: 'var(--dp-secondary)' }} />
+        Food
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {owned.map((f) => {
+          const count = available[f.item] ?? 0;
+          const refillLabel = f.refill === Infinity ? 'full' : `+${f.refill}`;
+          const disabled = full || count <= 0;
+          return (
+            <button
+              key={f.item}
+              type="button"
+              disabled={disabled}
+              onClick={() => onEat(f.item)}
+              title={full ? 'Stamina already full' : `Eat to restore ${refillLabel} Stamina`}
+              className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+              style={{
+                background: 'var(--dp-card-2)',
+                border: '1px solid var(--dp-line)',
+                color: 'var(--dp-text)',
+                fontFamily: 'var(--dp-font-body)',
+                cursor: disabled ? 'default' : 'pointer',
+              }}
+            >
+              <Drumstick size={13} style={{ color: 'var(--dp-secondary)' }} aria-hidden />
+              <span className="flex-1 font-semibold">{f.label}</span>
+              <span style={{ color: 'var(--dp-good)', fontFamily: 'var(--dp-font-disp)' }}>{refillLabel}</span>
+              <span
+                className="grid h-5 min-w-[20px] place-items-center rounded-md px-1 text-[11px] font-bold"
+                style={{
+                  background: 'color-mix(in srgb, var(--dp-secondary) 14%, transparent)',
+                  color: 'var(--dp-secondary)',
+                  fontFamily: 'var(--dp-font-disp)',
+                }}
+              >
+                x{count}
+              </span>
+            </button>
           );
         })}
       </div>

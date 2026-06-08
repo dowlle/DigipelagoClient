@@ -131,7 +131,7 @@ export function HardModeGuess() {
             <span className="min-w-[130px] font-semibold">{guess.name}</span>
             <Chip label="lvl" value={`${guess.level} ${dirGlyph(clue.level)}`} kind={dirKind(clue.level)} />
             <Chip label="attr" value={guess.attribute} kind={boolKind(clue.attribute)} />
-            <Chip label="type" value={guess.types.join('/') || '—'} kind={overlapKind(clue.types)} />
+            <Chip label="type" value={guess.types.join('/') || '-'} kind={overlapKind(clue.types)} />
             <Chip label="field" value={clue.fields} kind={overlapKind(clue.fields)} />
             <Chip label="year" value={`${guess.year ?? '?'} ${dirGlyph(clue.year)}`} kind={dirKind(clue.year)} />
             <Chip label="X" value={guess.xAntibody ? 'yes' : 'no'} kind={boolKind(clue.xAntibody)} />
