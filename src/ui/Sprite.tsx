@@ -1,19 +1,12 @@
-// Renders a Digimon sprite. When a build-time-baked transparent cutout exists
-// (manifest === 'ok'), it uses the real-shape cutout:
-//   • colour mode    → <img> of the transparent cutout (no white box)
-//   • silhouette mode → a CSS mask filled with a palette token (--dp-primary by
-//     default, or a passed `fill`), giving a real-shape silhouette tinted to the
-//     active theme — not the old flat brightness(0) blob.
-// When the cutout is flagged 'fallback' (non-white/transparent bg, very light
-// creatures) it keeps the legacy boxed rendering: a plain <img>, silhouette via
-// a brightness(0) filter — so odd-background sprites still render.
-//
-// Cutouts are baked offline by tools/bake-sprites.mjs and bundled same-origin;
-// nothing is fetched at runtime (Flag A). Same-origin bundling also makes the
-// CSS mask reliable (no CORS on mask-image).
+// Renders a Digimon sprite from the on-device runtime cache (see spriteEngine).
+// Digipelago hosts no art: until the user consents, this shows a placeholder and
+// fetches nothing. Once consent is granted it resolves to an on-device cutout:
+//   • colour mode    -> <img> of the transparent cutout (no white box)
+//   • silhouette mode -> a CSS mask filled with a palette token (real-shape shadow)
+// Boxed-fallback sprites (odd background) keep the legacy <img> + brightness(0).
 
 import type { CSSProperties } from 'react';
-import { cutoutSrc } from './cutout';
+import { useSprite } from './useSprite';
 
 export function Sprite({
   src,
@@ -32,11 +25,15 @@ export function Sprite({
   /** Drop-shadow glow color for silhouettes. */
   glow?: string;
 }) {
-  const { url, isCutout } = cutoutSrc(src);
+  const { state, url, isCutout } = useSprite(src);
 
-  if (!url) {
+  // No image yet (no src, awaiting consent, loading, or failed): text placeholder.
+  if (state !== 'ready' || !url) {
     return (
-      <span className="text-xs" style={{ color: 'var(--dp-text-muted)' }}>
+      <span
+        className={`text-xs ${state === 'loading' ? 'animate-pulse' : ''}`}
+        style={{ color: 'var(--dp-text-muted)' }}
+      >
         {shadow ? '???' : name}
       </span>
     );
@@ -59,14 +56,12 @@ export function Sprite({
     return <div aria-label="Mystery Digimon" className={className} style={maskStyle} />;
   }
 
-  // Colour cutout, or boxed-fallback (cutout/colour); silhouette fallback uses
-  // the legacy brightness(0) filter so odd-bg sprites still read as a shadow.
+  // Colour cutout, or boxed-fallback; silhouette fallback uses brightness(0).
   return (
     <img
       className={`object-contain ${className}`}
       src={url}
       alt={shadow ? 'Mystery Digimon' : name}
-      loading="lazy"
       draggable={false}
       style={shadow ? { filter: `brightness(0) drop-shadow(0 0 3px ${glow})` } : undefined}
     />

@@ -27,6 +27,8 @@ import { FOODS } from '../game/food';
 import type { Digimon } from '../game/types';
 import type { WrongPickMeter } from './useWrongPickMeter';
 import { SpriteReveal } from './SpriteReveal';
+import { SpriteConsentCard } from './SpriteConsentPrompt';
+import { useSpriteConsent } from './spriteConsent';
 import { attrColor } from './attrColor';
 
 const NUM_CHOICES = 4;
@@ -47,6 +49,7 @@ export function MultipleChoice({
   onEat: (item: string) => void;
 }) {
   const { slotData, state, catchDigimon } = useGame();
+  const spriteConsent = useSpriteConsent();
   const allEntries = useMemo(() => Object.values(dataset.meta), []);
   const [target, setTarget] = useState<Digimon | null>(null);
   const [choices, setChoices] = useState<Digimon[]>([]);
@@ -73,6 +76,15 @@ export function MultipleChoice({
   }, [target, startRound]);
 
   if (!slotData) return null;
+
+  // Silhouette mode is unplayable without the image, so gate it behind consent.
+  if (spriteConsent !== 'granted') {
+    return (
+      <div className="dp-card overflow-hidden p-5">
+        <SpriteConsentCard requiredFor="Silhouette mode" />
+      </div>
+    );
+  }
 
   const handlePick = (choice: Digimon) => {
     if (revealed || meter.blocked || !target) return;

@@ -42,7 +42,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const DATASET = join(ROOT, 'src', 'data', 'digimon_mvp.json');
 const SRC_CACHE = join(__dirname, 'sprites-src');
-const OUT_CUTOUTS = join(ROOT, 'public', 'cutouts');
+// Dev/QA only: cutouts are NOT shipped or hosted. At runtime the app fetches
+// sprites from Digi-API into the user's browser (with consent) and caches them on
+// the user's device (see src/ui/spriteEngine.ts). This bake stays useful only to
+// regenerate the committed fallback manifest and a QA contact sheet, so its
+// cutouts go under tools/out/ (gitignored) and never into public/ or the deploy.
+const OUT_CUTOUTS = join(__dirname, 'out', 'cutouts');
 const OUT_MANIFEST_DIR = join(ROOT, 'src', 'assets', 'cutouts');
 const OUT_REPORT_DIR = join(__dirname, 'out');
 

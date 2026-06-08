@@ -5,6 +5,7 @@ import { entryStatus, lockReason } from '../game/status';
 import type { GameState, Digimon, SlotData } from '../game/types';
 import { attrColor } from './attrColor';
 import { Sprite } from './Sprite';
+import { SpriteConsentBanner } from './SpriteConsentPrompt';
 import { useInViewport } from './useInViewport';
 
 const CELL = 92; // column width (px)
@@ -351,6 +352,7 @@ export function DexGrid() {
 
   return (
     <div className="dp-panel p-4">
+      <SpriteConsentBanner />
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <strong className="text-base">Digidex</strong>
         {/* Flag D: generic counts — captured / total, never an attribute goal. */}

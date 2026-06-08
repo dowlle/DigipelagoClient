@@ -8,7 +8,7 @@
 // silhouette filter for the colour image on reveal. Used by silhouette mode (MC).
 
 import type { CSSProperties } from 'react';
-import { cutoutSrc } from './cutout';
+import { useSprite } from './useSprite';
 import { Sprite } from './Sprite';
 
 export function SpriteReveal({
@@ -27,10 +27,11 @@ export function SpriteReveal({
   glow?: string;
   className?: string;
 }) {
-  const { url, isCutout } = cutoutSrc(src);
+  const { state, url, isCutout } = useSprite(src);
 
-  // Fallback: no real cutout to mask/stack → boxed Sprite that swaps shadow.
-  if (!url || !isCutout) {
+  // No ready cutout to mask/stack (awaiting consent, loading, or boxed-fallback)
+  // -> defer to Sprite, which renders the placeholder / boxed image + shadow swap.
+  if (state !== 'ready' || !url || !isCutout) {
     return <Sprite src={src} name={name} shadow={!revealed} className={className} />;
   }
 

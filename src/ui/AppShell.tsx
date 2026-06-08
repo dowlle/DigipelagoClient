@@ -9,7 +9,7 @@
 // token-driven and fed by real context state.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette, Lock } from 'lucide-react';
+import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette, Lock, Image as ImageIcon } from 'lucide-react';
 import { useGame } from '../game/context';
 import { useFeed, type FeedRow } from '../ap/feed';
 import { getDigimon } from '../data/dataset';
@@ -26,6 +26,7 @@ import { useMoments } from './moments/useMoments';
 import { useWrongPickMeter } from './useWrongPickMeter';
 import { useFood } from './useFood';
 import { FOODS, FOOD_REFILL } from '../game/food';
+import { setSpriteConsent, useSpriteConsent } from './spriteConsent';
 
 export type View = 'play' | 'dex' | 'multiworld' | 'settings';
 type Mode = 'text' | 'mc';
@@ -235,6 +236,33 @@ function ModeTabs({ mode, setMode, locked }: { mode: Mode; setMode: (m: Mode) =>
   );
 }
 
+function SpriteSettings() {
+  const consent = useSpriteConsent();
+  const on = consent === 'granted';
+  return (
+    <div className="dp-card p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <ImageIcon size={16} style={{ color: 'var(--dp-primary)' }} aria-hidden />
+        <span className="text-sm font-semibold" style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}>
+          Digimon images
+        </span>
+      </div>
+      <p className="mb-3 text-sm" style={{ color: 'var(--dp-text-secondary)' }}>
+        Digipelago does not host Digimon art. With this on, your browser fetches images from
+        digi-api.com and caches them on this device. Required for Silhouette mode.
+      </p>
+      <div className="flex items-center gap-2">
+        <button className="dp-btn dp-btn-primary" disabled={on} onClick={() => setSpriteConsent('granted')}>
+          {on ? 'Images on' : 'Allow images'}
+        </button>
+        <button className="dp-toggle-btn" disabled={!on} onClick={() => setSpriteConsent('denied')}>
+          Turn off
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SettingsView({ slotName }: { slotName: string | null }) {
   const addr = savedAddress();
   return (
@@ -254,6 +282,7 @@ function SettingsView({ slotName }: { slotName: string | null }) {
         </p>
         <PaletteSwitcher />
       </div>
+      <SpriteSettings />
       <div className="dp-card p-5">
         <span className="mb-2 block text-sm font-semibold" style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-disp)' }}>
           Connection

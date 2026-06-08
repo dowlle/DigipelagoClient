@@ -6,9 +6,13 @@ dist-ssr/
 *.log
 *.tsbuildinfo
 
-# Build-time sprite bake (tools/bake-sprites.mjs):
-#  - sprites-src/ is the ~90MB cached pinned snapshot; re-fetchable on demand,
-#    kept out of git to avoid doubling repo size. Re-populate with the bake.
-#  - the baked cutouts (public/cutouts/) + manifest (src/assets/cutouts/) ARE
-#    committed — they are the runtime assets the app loads.
+# Sprites are NOT shipped or hosted. At runtime the app fetches them from
+# Digi-API into the user's browser (with consent) and caches them on the user's
+# device (src/ui/spriteEngine.ts). The committed manifest (src/assets/cutouts/)
+# is name-only fallback data, not art.
+#  - sprites-src/ : dev cache of raw source PNGs for the optional QA bake.
+#  - tools/out/   : QA bake output (cutouts + contact sheet), dev only.
+#  - public/cutouts/ : never committed and never built into the deploy.
 tools/sprites-src/
+tools/out/
+public/cutouts/
