@@ -163,9 +163,26 @@ let roundBuf: RoundRecord[] = [];
 let eventBuf: EventRecord[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Stamp the shared dataset_version on a record when it omits one. */
-function withVersion<T extends { dataset_version?: string }>(rec: T): T {
-  return rec.dataset_version ? rec : { ...rec, dataset_version: DATASET_VERSION };
+// Anonymous, per-page-load session tag. NOT an identity and never PII: it lets
+// the backend dedupe and cap one session's weight on the aggregates. Rotates
+// every page load by design (see the perceived-difficulty privacy rules).
+const WHO: string = (() => {
+  try {
+    const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+    if (c?.randomUUID) return c.randomUUID().slice(0, 18);
+  } catch {
+    /* fall through to the non-crypto tag */
+  }
+  return `s-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+})();
+
+/** Stamp the shared dataset_version + anonymous session tag when omitted. */
+function stamp<T extends { dataset_version?: string; who?: string }>(rec: T): T {
+  return {
+    ...rec,
+    dataset_version: rec.dataset_version ?? DATASET_VERSION,
+    who: rec.who ?? WHO,
+  };
 }
 
 /** Best-effort POST of a batch under one of the wrapper keys the backend
@@ -189,7 +206,7 @@ function scheduleFlush(): void {
 /** Queue a played round for the next best-effort flush. Never throws. */
 export function recordRound(round: RoundRecord): void {
   try {
-    roundBuf.push(withVersion(round));
+    roundBuf.push(stamp(round));
     if (roundBuf.length >= MAX_BATCH) void flushTelemetry();
     else scheduleFlush();
   } catch {
@@ -200,7 +217,7 @@ export function recordRound(round: RoundRecord): void {
 /** Queue an allow-listed event for the next best-effort flush. Never throws. */
 export function recordEvent(event: EventRecord): void {
   try {
-    eventBuf.push(withVersion(event));
+    eventBuf.push(stamp(event));
     if (eventBuf.length >= MAX_BATCH) void flushTelemetry();
     else scheduleFlush();
   } catch {

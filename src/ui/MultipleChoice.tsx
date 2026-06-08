@@ -18,12 +18,13 @@
 // Flag C: neutral catchphrase — "Name the silhouette" (never the trademarked
 // Pokémon-anime line).
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Heart, Drumstick } from 'lucide-react';
 import { dataset } from '../data/dataset';
 import { useGame } from '../game/context';
 import { buildChoices, guessableTargets, pickTarget, type McDifficulty } from '../game/mc';
 import { findByName, normalizeName } from '../game/match';
+import { recordRound } from '../api/backend';
 import { FOODS } from '../game/food';
 import type { Digimon } from '../game/types';
 import type { WrongPickMeter } from './useWrongPickMeter';
@@ -69,6 +70,8 @@ export function MultipleChoice({
   const [roundInput, setRoundInput] = useState<'mc' | 'typed'>('mc');
   const [typed, setTyped] = useState('');
   const [typedFeedback, setTypedFeedback] = useState<'wrong' | 'unknown' | null>(null);
+  // When the current round was shown — for the telemetry solve-time (ms).
+  const roundStartRef = useRef<number | null>(null);
 
   const startRound = useCallback(() => {
     if (!slotData) return;
@@ -80,6 +83,7 @@ export function MultipleChoice({
     }
     const input: 'mc' | 'typed' = random && Math.random() < 0.5 ? 'typed' : 'mc';
     setRoundInput(input);
+    roundStartRef.current = Date.now();
     setTarget(t);
     setChoices(input === 'mc' ? buildChoices(t, allEntries, NUM_CHOICES, Math.random, difficulty) : []);
     setRevealed(false);
@@ -105,6 +109,19 @@ export function MultipleChoice({
 
   // Shared success path: reveal the sprite, check the AP location, queue next round.
   const solve = (id: number) => {
+    // Telemetry (fire-and-forget): one round record per solved round. The wrong
+    // picks accumulated this round drive per-pair confusability; ms drives tiers.
+    const startedAt = roundStartRef.current;
+    recordRound({
+      target_id: id,
+      options: roundInput === 'mc' ? choices.map((c) => c.id) : undefined,
+      picked_id: id,
+      correct: true,
+      ms: startedAt != null ? Date.now() - startedAt : undefined,
+      mode: roundInput,
+      difficulty,
+      wrong_ids: wrongPicks.size ? [...wrongPicks] : undefined,
+    });
     setRevealed(true);
     catchDigimon(id);
     window.setTimeout(() => setTarget(null), REVEAL_MS);
@@ -135,7 +152,10 @@ export function MultipleChoice({
       setTypedFeedback(null);
       return;
     }
-    if (findByName(typed, allEntries)) {
+    const other = findByName(typed, allEntries);
+    if (other) {
+      // A real-but-wrong Digimon: counts toward the round's wrong_ids (confusability).
+      setWrongPicks((s) => new Set(s).add(other.id));
       setTypedFeedback('wrong');
       meter.registerWrong();
     } else {

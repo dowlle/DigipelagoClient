@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette, Lock, Image as ImageIcon, User } from 'lucide-react';
 import { useGame } from '../game/context';
 import { useAuth } from '../api/useAuth';
-import { getThemes, putThemes } from '../api/backend';
+import { getThemes, putThemes, recordEvent } from '../api/backend';
 import { loadUnlockedThemeIds, mergeUnlockedThemeIds } from './useTheme';
 import { useFeed, type FeedRow } from '../ap/feed';
 import { getDigimon } from '../data/dataset';
@@ -512,6 +512,22 @@ export function AppShell() {
   const staminaMax = (slotData?.starting_stamina ?? 5) + state.staminaUps;
   const staminaRegenMs = (slotData?.stamina_regen_seconds ?? 30) * 1000;
   const mcMeter = useWrongPickMeter({ max: staminaMax, regenMs: staminaRegenMs });
+
+  // Telemetry (fire-and-forget): input-mode switches + stamina exhaustion.
+  const prevModeRef = useRef<Mode | null>(null);
+  useEffect(() => {
+    if (prevModeRef.current && prevModeRef.current !== mode) {
+      recordEvent({ event_type: 'mode_switch', payload: { from: prevModeRef.current, to: mode } });
+    }
+    prevModeRef.current = mode;
+  }, [mode]);
+  const wasBlockedRef = useRef(false);
+  useEffect(() => {
+    if (mcMeter.blocked && !wasBlockedRef.current) {
+      recordEvent({ event_type: 'stamina_blocked' });
+    }
+    wasBlockedRef.current = mcMeter.blocked;
+  }, [mcMeter.blocked]);
 
   // Food inventory: received counts come from GameState (AP item stream); eaten
   // counts come from DataStorage via useFood. Eating refills Stamina instantly.

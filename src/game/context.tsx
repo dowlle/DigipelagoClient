@@ -14,7 +14,8 @@ import type { Client } from 'archipelago.js';
 import { useAPConnection, type ConnectionInfo } from '../ap/connection';
 import { appendCaught, watchCaught } from '../ap/datastorage';
 import { catchSlotId, countCheckedCatchSlots } from '../ap/locations';
-import { DATASET_VERSION } from '../data/dataset';
+import { recordEvent, flushTelemetry } from '../api/backend';
+import { DATASET_VERSION, getDigimon } from '../data/dataset';
 import { assertDatasetMatches, buildState } from './state';
 import type { GameState, SlotData } from './types';
 
@@ -74,6 +75,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const caughtRef = useRef<Set<number>>(new Set());
   const caughtCountRef = useRef(0); // monotonic
   const identityRef = useRef<Identity | null>(null);
+  const connectedAtRef = useRef<number | null>(null); // telemetry session timer
 
   const recompute = useCallback((client: Client) => {
     const slot = slotDataRef.current;
@@ -91,6 +93,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
         slotDataRef.current = slot;
         setSlotData(slot);
 
+        // Telemetry: anonymous session start (fire-and-forget).
+        connectedAtRef.current = Date.now();
+        recordEvent({ event_type: 'session_start' });
+
         const id: Identity = { team: client.players.self.team, slot: client.players.self.slot };
         identityRef.current = id;
 
@@ -105,6 +111,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
       },
       onDisconnected: () => {
         // Keep last-known state on screen; refs persist for a clean reconnect.
+        // Telemetry: close the session out and flush the final batch.
+        const startedAt = connectedAtRef.current;
+        if (startedAt != null) {
+          recordEvent({ event_type: 'session_end', payload: { duration_ms: Date.now() - startedAt } });
+          connectedAtRef.current = null;
+        }
+        void flushTelemetry();
       },
       onItemsReceived: (client: Client) => recompute(client),
       onLocationsChecked: (client: Client) => recompute(client),
@@ -134,6 +147,15 @@ export function GameProvider({ children }: { children: ReactNode }) {
       caughtRef.current = unionInto(caughtRef.current, [digimonId]);
       caughtCountRef.current = nextK;
       recompute(client);
+
+      // Telemetry: a catch in ANY mode (free-text / hard / silhouette / typed).
+      const mon = getDigimon(digimonId);
+      if (mon) {
+        recordEvent({
+          event_type: 'catch',
+          payload: { target_id: digimonId, level: mon.level, attribute: mon.attribute },
+        });
+      }
     },
     [ap.clientRef, recompute],
   );
