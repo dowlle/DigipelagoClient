@@ -62,6 +62,36 @@ def create_app() -> Flask:
     app.register_blueprint(connections_bp, url_prefix="/api")
     app.register_blueprint(telemetry_bp, url_prefix="/api")
 
+    # --- CLI: difficulty aggregation (out-of-band, e.g. host cron) ----------
+    @app.cli.command("aggregate-difficulty")
+    def aggregate_difficulty():
+        """Recompute target_stats + pair_stats from telemetry for every dataset.
+
+        Run out of band (a host cron calls `flask aggregate-difficulty`); the
+        GET /api/difficulty read path stays a pure read with no write contention.
+        Imported locally so a down DB never blocks app boot/import. Errors are
+        surfaced to the operator (the CLI exits non-zero) rather than swallowed.
+        """
+        from . import aggregate  # local import: keep boot resilient to a down DB
+
+        with db.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT DISTINCT dataset_version FROM rounds "
+                    "WHERE dataset_version IS NOT NULL"
+                )
+                versions = [r["dataset_version"] for r in cur.fetchall()]
+
+            for version in versions:
+                summary = aggregate.aggregate_dataset(conn, version)
+                log.info(
+                    "aggregate-difficulty %s: %d targets, %d pairs",
+                    version,
+                    summary["targets"],
+                    summary["pairs"],
+                )
+            log.info("aggregate-difficulty done: %d dataset version(s)", len(versions))
+
     # --- Health probe --------------------------------------------------------
     @app.route("/api/health", methods=["GET"])
     def health():

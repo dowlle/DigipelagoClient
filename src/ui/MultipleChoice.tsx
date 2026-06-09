@@ -25,6 +25,8 @@ import { useGame } from '../game/context';
 import { buildChoices, guessableTargets, pickTarget, type McDifficulty } from '../game/mc';
 import { findByName, normalizeName } from '../game/match';
 import { recordRound } from '../api/backend';
+import { fetchDifficulty, type DifficultyData } from '../api/difficulty';
+import { DATASET_VERSION } from '../data/dataset';
 import { FOODS } from '../game/food';
 import type { Digimon } from '../game/types';
 import type { WrongPickMeter } from './useWrongPickMeter';
@@ -32,9 +34,21 @@ import { SpriteReveal } from './SpriteReveal';
 import { SpriteConsentCard } from './SpriteConsentPrompt';
 import { useSpriteConsent } from './spriteConsent';
 import { attrColor } from './attrColor';
+import { attrCue, type AttrShape } from './attrCue';
 
 const NUM_CHOICES = 4;
 const REVEAL_MS = 1300;
+
+// Mode C tier weights (FEAT-03): mild multiplicative bias so the 'telemetry'
+// difficulty surfaces harder targets a bit more often WITHIN the already-filtered
+// guessable pool. Every weight stays > 0 so no eligible target is starved, and
+// the bias is gentle enough that easy targets are never excluded - it only
+// reweights selection probability, never eligibility (beatability is untouched).
+const TIER_WEIGHT: Record<'easy' | 'normal' | 'hard', number> = {
+  easy: 0.6,
+  normal: 1.0,
+  hard: 1.6,
+};
 
 type OptionState = 'idle' | 'wrong' | 'correct' | 'dim';
 
@@ -72,10 +86,41 @@ export function MultipleChoice({
   const [typedFeedback, setTypedFeedback] = useState<'wrong' | 'unknown' | null>(null);
   // When the current round was shown — for the telemetry solve-time (ms).
   const roundStartRef = useRef<number | null>(null);
+  // Crowd-sourced difficulty data (FEAT-03), loaded only in 'telemetry' mode.
+  // null until/unless the backend returns usable data; when null the round logic
+  // falls back to the 'hard' heuristic + uniform target selection (identical to
+  // offline). Never gates beatability — pure distractor/selection sharpening.
+  const [crowd, setCrowd] = useState<DifficultyData | null>(null);
+
+  // Fire-and-forget load of the crowd difficulty for this dataset, but ONLY when
+  // the player picked the 'telemetry' difficulty (so we never hit the network on
+  // a normal connect). Cached + in-flight-deduped in fetchDifficulty, so this is
+  // at most one request per session. Stays mounted-component-safe via `alive`.
+  useEffect(() => {
+    if (difficulty !== 'telemetry') {
+      setCrowd(null);
+      return;
+    }
+    let alive = true;
+    void fetchDifficulty(DATASET_VERSION).then((data) => {
+      if (alive) setCrowd(data);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [difficulty]);
 
   const startRound = useCallback(() => {
     if (!slotData) return;
-    const t = pickTarget(guessableTargets(allEntries, state, slotData));
+    // Mode C (telemetry): mildly bias target selection toward harder tiers WITHIN
+    // the same guessable pool. Eligibility is unchanged (still guessableTargets);
+    // only selection probability shifts, and every weight stays > 0. Uniform
+    // (weightOf undefined) in every other mode and when no crowd data is loaded.
+    const weightOf =
+      difficulty === 'telemetry' && crowd
+        ? (d: Digimon) => TIER_WEIGHT[crowd.targets[String(d.id)]?.difficulty ?? 'normal']
+        : undefined;
+    const t = pickTarget(guessableTargets(allEntries, state, slotData), Math.random, weightOf);
     if (!t) {
       setTarget(null);
       setChoices([]);
@@ -85,16 +130,41 @@ export function MultipleChoice({
     setRoundInput(input);
     roundStartRef.current = Date.now();
     setTarget(t);
-    setChoices(input === 'mc' ? buildChoices(t, allEntries, NUM_CHOICES, Math.random, difficulty) : []);
+    // Mode A (telemetry): hand this target's crowd-confusable distractor ids to
+    // buildChoices. Absent/empty -> buildChoices delegates to the 'hard' path.
+    const tele =
+      difficulty === 'telemetry' && crowd ? { confusable: crowd.confusable[String(t.id)] } : undefined;
+    setChoices(input === 'mc' ? buildChoices(t, allEntries, NUM_CHOICES, Math.random, difficulty, tele) : []);
     setRevealed(false);
     setWrongPicks(new Set());
     setTyped('');
     setTypedFeedback(null);
-  }, [slotData, state, allEntries, random, difficulty]);
+  }, [slotData, state, allEntries, random, difficulty, crowd]);
 
   useEffect(() => {
     if (!target) startRound();
   }, [target, startRound]);
+
+  // Keyboard input (accessibility): number keys 1-4 pick the matching option in
+  // multiple-choice rounds. The visible badge already shows idx+1 (OptionBtn), so
+  // the keys map to what the player sees. Routes through handlePick, so all the
+  // existing guards (target / meter / revealed) and the catch dispatch are
+  // unchanged - this adds an input method, not a reachability path. A ref holds
+  // the latest pick handler so the listener binds once and never goes stale, and
+  // it is skipped while a text field is focused (typed rounds stay unaffected).
+  const pickByIndexRef = useRef<(i: number) => void>(() => {});
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key < '1' || e.key > '4') return;
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const el = document.activeElement;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (el as HTMLElement | null)?.isContentEditable) return;
+      pickByIndexRef.current(Number(e.key) - 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   if (!slotData) return null;
 
@@ -135,6 +205,14 @@ export function MultipleChoice({
       setWrongPicks((s) => new Set(s).add(choice.id));
       meter.registerWrong();
     }
+  };
+
+  // Keep the keydown listener's handler current: only active for multiple-choice
+  // rounds with a live target that is not yet revealed and not Stamina-blocked.
+  pickByIndexRef.current = (i: number) => {
+    if (roundInput !== 'mc' || revealed || meter.blocked || !target) return;
+    const choice = choices[i];
+    if (choice) handlePick(choice);
   };
 
   // Typed-silhouette round (FEAT-02): match the typed name against the target.
@@ -623,19 +701,60 @@ function OptionBtn({
       >
         {label}
       </span>
-      {/* attribute dot clue */}
-      {!correct && !wrong && (
-        <span
-          className="h-2.5 w-2.5 shrink-0 rounded-full"
-          style={{ background: attrColor(attribute), boxShadow: `0 0 6px ${attrColor(attribute)}` }}
-          aria-hidden
-        />
-      )}
+      {/* attribute clue — colourblind-safe: colour (attrColor) PLUS a distinct
+          shape and a short label (attrCue), so attribute is conveyed by shape and
+          text, not colour alone. Full name on title + aria-label. */}
+      {!correct && !wrong && <AttrCueChip attribute={attribute} />}
       {correct && (
         <span className="text-[11px] font-bold" style={{ color: 'var(--dp-good)', fontFamily: 'var(--dp-font-disp)' }}>
           CAUGHT
         </span>
       )}
     </button>
+  );
+}
+
+// ── colourblind-safe attribute cue chip ─────────────────────────────────────
+// Renders a distinct SHAPE filled with the attribute colour, plus a two-letter
+// LABEL. Attribute identity survives loss of colour vision (shape + text are the
+// redundant channels). Colour still comes from attrColor (single source).
+function AttrShapeIcon({ shape, color }: { shape: AttrShape; color: string }) {
+  const common = { width: 11, height: 11, viewBox: '0 0 12 12', 'aria-hidden': true } as const;
+  const glow = { filter: `drop-shadow(0 0 3px ${color})` } as const;
+  switch (shape) {
+    case 'square':
+      return <svg {...common} style={glow}><rect x="1.5" y="1.5" width="9" height="9" rx="1.5" fill={color} /></svg>;
+    case 'triangle':
+      return <svg {...common} style={glow}><path d="M6 1.5 L10.5 10 L1.5 10 Z" fill={color} /></svg>;
+    case 'diamond':
+      return <svg {...common} style={glow}><path d="M6 1 L11 6 L6 11 L1 6 Z" fill={color} /></svg>;
+    case 'hexagon':
+      return <svg {...common} style={glow}><path d="M3.2 1.7 H8.8 L11 6 L8.8 10.3 H3.2 L1 6 Z" fill={color} /></svg>;
+    case 'ring':
+      return <svg {...common} style={glow}><circle cx="6" cy="6" r="4.2" fill="none" stroke={color} strokeWidth="2" /></svg>;
+    case 'circle':
+    default:
+      return <svg {...common} style={glow}><circle cx="6" cy="6" r="4.5" fill={color} /></svg>;
+  }
+}
+
+function AttrCueChip({ attribute }: { attribute: string }) {
+  const cue = attrCue(attribute);
+  const color = attrColor(attribute);
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1"
+      title={`Attribute: ${cue.full}`}
+      aria-label={`Attribute: ${cue.full}`}
+    >
+      <AttrShapeIcon shape={cue.shape} color={color} />
+      <span
+        className="text-[10px] font-bold leading-none"
+        style={{ color: 'var(--dp-text-mid)', fontFamily: 'var(--dp-font-disp)' }}
+        aria-hidden
+      >
+        {cue.label}
+      </span>
+    </span>
   );
 }

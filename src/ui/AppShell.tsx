@@ -27,7 +27,7 @@ import { FeedRail, FullFeed } from './Feed';
 import { CatchToast } from './moments/CatchToast';
 import { CapacityToast } from './moments/CapacityToast';
 import { useMoments } from './moments/useMoments';
-import { useWrongPickMeter } from './useWrongPickMeter';
+import { useWrongPickMeter, staminaStorageKey } from './useWrongPickMeter';
 import { useFood } from './useFood';
 import { FOODS, FOOD_REFILL } from '../game/food';
 import { setSpriteConsent, useSpriteConsent } from './spriteConsent';
@@ -280,6 +280,7 @@ const DIFFICULTY_OPTS: { value: McDifficulty; label: string; hint: string }[] = 
   { value: 'easy', label: 'Easy', hint: 'distractors from anywhere' },
   { value: 'normal', label: 'Normal', hint: 'same-level distractors' },
   { value: 'hard', label: 'Hard', hint: 'same-base variants' },
+  { value: 'telemetry', label: 'Crowd', hint: 'sharpened by real play' },
 ];
 
 function DifficultySettings({
@@ -511,7 +512,25 @@ export function AppShell() {
   // seed-configured (stamina_regen_seconds; 0 = free guesses, default 30s/point).
   const staminaMax = (slotData?.starting_stamina ?? 5) + state.staminaUps;
   const staminaRegenMs = (slotData?.stamina_regen_seconds ?? 30) * 1000;
-  const mcMeter = useWrongPickMeter({ max: staminaMax, regenMs: staminaRegenMs });
+  // Per-seat persistence key from the live client's numeric team+slot (the same
+  // identity datastorage.ts keys catches on). Undefined until connected/identity
+  // is known, so the meter stays in-memory pre-connect; it adopts the key once
+  // identity resolves. Same client/players access pattern as the `seats` memo,
+  // but keyed only on isConnected/clientRef: self's team+slot is fixed per seat
+  // and (unlike the seat COUNT) never changes when peers join, and apRows is
+  // declared further down so it cannot be a dependency here.
+  const staminaKey = useMemo(() => {
+    if (!isConnected) return undefined;
+    try {
+      const self = clientRef.current?.players.self;
+      const team = self?.team;
+      const slot = self?.slot;
+      return team != null && slot != null ? staminaStorageKey(team, slot) : undefined;
+    } catch {
+      return undefined;
+    }
+  }, [isConnected, clientRef]);
+  const mcMeter = useWrongPickMeter({ max: staminaMax, regenMs: staminaRegenMs, storageKey: staminaKey });
 
   // Telemetry (fire-and-forget): input-mode switches + stamina exhaustion.
   const prevModeRef = useRef<Mode | null>(null);

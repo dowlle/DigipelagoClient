@@ -75,6 +75,60 @@ tuple — never string-format SQL.
 `users`, `unlocked_themes`, `saved_connections`, `rounds`, `round_options`,
 `events`, `target_stats`, `pair_stats` (full DDL in `db.py::_SCHEMA_STATEMENTS`).
 
+## aggregate.py (FEAT-03 difficulty engine, backend half)
+
+Recomputes the served difficulty-hint tables from raw telemetry. The hints are
+cosmetic/UX only: they sharpen the client's multiple-choice distractors and
+bias target selection within a chosen tier. They NEVER gate Archipelago
+beatability; the client falls back to its heuristic when this data is absent.
+
+```python
+PRIOR = 0.5        # p0: cold-start fail-rate prior for a new target
+K = 8              # pseudo-counts pulling D(t) toward PRIOR at low n
+MS_CAP = 120_000   # drop response times that are None, <= 0, or > MS_CAP (ms)
+EASY_MAX = 0.34    # D(t) <= EASY_MAX -> 'easy'
+HARD_MIN = 0.55    # D(t) >= HARD_MIN -> 'hard'  (else 'normal')
+PAIR_PRIOR = 0.15  # pp: cold-start wrong-rate prior for a new distractor
+PAIR_K = 4         # KP: pseudo-counts pulling confus toward PAIR_PRIOR
+
+def tier_of(fail_rate: float) -> str:
+    """'easy' | 'normal' | 'hard' from a (shrunk) fail rate."""
+
+def aggregate_targets(round_rows, *, prior=PRIOR, k=K) -> list[dict]:
+    """Pure. round_rows: dicts {target_id, who, correct, ms} for ONE
+    dataset_version. Per-(who) dedupe + weight cap (first seen kept; who=None
+    each counts once, never collapsed). median_ms over ms after dropping
+    None/<=0/>MS_CAP. Bayesian shrinkage D(t) = (k*prior + fails)/(k + n).
+    Returns {target_id, n, fail_rate (= D(t)), median_ms, difficulty (tier)}."""
+
+def aggregate_pairs(option_rows, *, prior=PAIR_PRIOR, k=PAIR_K) -> list[dict]:
+    """Pure. option_rows: dicts {target_id, option_id, was_wrong} for ONE
+    dataset_version (option_id == target_id is skipped). Per (target_id,
+    distractor_id): confus = (k*prior + n_wrong)/(k + n_shown).
+    Returns {target_id, distractor_id, n_shown, n_wrong, confus}."""
+
+def aggregate_dataset(conn, dataset_version: str) -> dict:
+    """Thin DB wrapper (NOT unit-tested): SELECT rounds + the round_options/
+    rounds join for one version, run the two pure fns, UPSERT into
+    target_stats / pair_stats via ON CONFLICT (composite PKs). Returns
+    {"targets": N, "pairs": M}."""
+```
+
+The pure functions take already-fetched row dicts and return rows to upsert, so
+they are unit-testable with no DB (see `tests/test_aggregate.py`).
+`GET /api/difficulty`'s response contract is unchanged: it serves the
+recomputed `target_stats.difficulty`/`n` and `pair_stats` ordered by
+`confus DESC`.
+
+### Trigger: `flask aggregate-difficulty`
+
+`create_app()` registers an `@app.cli.command("aggregate-difficulty")` that
+opens `db.get_conn()`, discovers distinct `dataset_version`s from `rounds`, and
+calls `aggregate.aggregate_dataset(conn, version)` for each. Run out of band
+(host cron), so the GET read path stays a pure read with no write contention.
+`aggregate` is imported lazily inside the command so a down DB never blocks
+boot; the command itself surfaces errors to the operator.
+
 ## crypto.py
 
 ```python
