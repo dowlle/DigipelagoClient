@@ -74,6 +74,17 @@ export function MultipleChoice({
   const { slotData, state, catchDigimon } = useGame();
   const spriteConsent = useSpriteConsent();
   const allEntries = useMemo(() => Object.values(dataset.meta), []);
+  // Distractor source restricted to UNLOCKED attributes only (item #3): wrong MC
+  // options never name an attribute the player has not unlocked yet. This narrows
+  // ONLY the distractor pool - the TARGET pool stays guessableTargets(allEntries)
+  // below, so which catches are reachable (AP beatability) is unchanged. The
+  // narrowed pool is a strict subset of the dataset and buildChoices' layered
+  // fallback degrades gracefully (never throws, returns up to n). Preserve this
+  // memo if the distractor source is refactored later, or the restriction reverts.
+  const unlockedEntries = useMemo(
+    () => allEntries.filter((d) => state.heldAttributes.has(d.attribute)),
+    [allEntries, state.heldAttributes],
+  );
   const [target, setTarget] = useState<Digimon | null>(null);
   const [choices, setChoices] = useState<Digimon[]>([]);
   const [revealed, setRevealed] = useState(false);
@@ -134,12 +145,14 @@ export function MultipleChoice({
     // buildChoices. Absent/empty -> buildChoices delegates to the 'hard' path.
     const tele =
       difficulty === 'telemetry' && crowd ? { confusable: crowd.confusable[String(t.id)] } : undefined;
-    setChoices(input === 'mc' ? buildChoices(t, allEntries, NUM_CHOICES, Math.random, difficulty, tele) : []);
+    // Distractors are drawn from unlockedEntries (item #3); the target itself is
+    // always present in that subset (its attribute is unlocked by definition).
+    setChoices(input === 'mc' ? buildChoices(t, unlockedEntries, NUM_CHOICES, Math.random, difficulty, tele) : []);
     setRevealed(false);
     setWrongPicks(new Set());
     setTyped('');
     setTypedFeedback(null);
-  }, [slotData, state, allEntries, random, difficulty, crowd]);
+  }, [slotData, state, allEntries, unlockedEntries, random, difficulty, crowd]);
 
   useEffect(() => {
     if (!target) startRound();

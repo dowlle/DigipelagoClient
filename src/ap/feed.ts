@@ -4,7 +4,10 @@
 // and maps them to typed presentation rows for the HUD feed + moment toasts.
 //
 //   • `itemSent`      (client.messages) → "your catch shipped <item> → <player>"
-//                     for items YOU found (item.sender === self), and
+//                     for items YOU found (item.sender === self). A "catch" is
+//                     defined by its SOURCE (the item shipped FROM a Catch Slot
+//                     #k in your world), NOT by the receiver, so solo seeds where
+//                     you ship items to yourself still produce catch rows.
 //                     "received <item> · from <player>" for items sent TO you.
 //   • `itemsReceived` (client.items)    → backfill of received items (capacity
 //                     beats are derived from GameState.capacity in the UI layer).
@@ -34,6 +37,9 @@ export interface FeedRow {
   slot?: number;
   /** catch: the Digimon you caught, resolved by the UI from slot ↔ caught order. */
   caughtName?: string;
+  /** AP item classification bitfield (progression=1, useful=2, trap=4), for the
+   *  item-name color. Undefined on synthetic/legacy rows so the UI falls back. */
+  flags?: number;
   /** capacity: +N delta and the new max. */
   by?: number;
   to?: number;
@@ -44,9 +50,84 @@ export interface FeedRow {
 /** Markers the apworld uses for catch-shipped items vs storage upgrades. */
 const CAPACITY_ITEM = /storage upgrade/i;
 
+// AP item classification bitflags (NetworkItem.flags).
+const FLAG_PROGRESSION = 0b001;
+const FLAG_USEFUL = 0b010;
+const FLAG_TRAP = 0b100;
+
+// AP-standard item-name colors, matching the Archipelago text client
+// (ArchipelagoPokepelago/NetUtils.py `_handle_item_name`). These are fixed AP
+// hex values, NOT theme tokens, for parity with the AP client.
+const COLOR_NONE = '#00EEEE'; // cyan: no special flags (filler)
+const COLOR_PROGRESSION = '#AF99EF'; // plum
+const COLOR_USEFUL = '#6D8BE8'; // slateblue
+const COLOR_TRAP = '#FA8072'; // salmon
+
+/**
+ * Map an AP item classification bitfield to its AP-standard item-name color.
+ * Precedence is an elif chain (progression > useful > trap), matching the AP
+ * text client exactly — NOT a bitwise max. Returns undefined when `flags` is
+ * undefined so the UI can fall back to its theme token color.
+ */
+export function itemFlagColor(flags?: number): string | undefined {
+  if (flags === undefined) return undefined;
+  if (flags === 0) return COLOR_NONE;
+  if (flags & FLAG_PROGRESSION) return COLOR_PROGRESSION;
+  if (flags & FLAG_USEFUL) return COLOR_USEFUL;
+  if (flags & FLAG_TRAP) return COLOR_TRAP;
+  return COLOR_NONE;
+}
+
 function itemId(prefix: string, item: Item, idx: number): string {
   // Items don't carry a unique network index here, so compose a best-effort key.
   return `${prefix}:${item.locationId ?? idx}:${item.name}:${item.sender.slot}:${item.receiver.slot}`;
+}
+
+/** Minimal shape of the fields `classifyShippedItem` reads off an AP Item. */
+export interface ShippedItem {
+  name: string;
+  locationId: number;
+  flags?: number;
+  sender: { slot: number };
+  receiver: { slot: number; alias: string };
+}
+
+/**
+ * Pure classifier for an `itemSent` event: decide whether it is a "catch" row
+ * and, if so, build it. A catch is defined by its SOURCE — the item must have
+ * been shipped BY you (sender === self) FROM one of your `Catch Slot #k`
+ * locations. The receiver is irrelevant to whether it's a catch, so solo seeds
+ * (you ship to yourself) still produce catch rows; `player` is only set when the
+ * recipient is another world, so the solo case renders "You caught X -> item"
+ * with no "to <player>" tail.
+ *
+ * Returns null when the event is not a catch (foreign sender, or a self-targeted
+ * item that did NOT come from a Catch Slot, e.g. an internal event). Read-only:
+ * builds a presentation row, never touches AP state or reachability.
+ *
+ * @param item the shipped network item
+ * @param selfSlot this client's slot number
+ * @param locName the source location name (pkg.reverseLocationTable[locationId])
+ */
+export function classifyShippedItem(
+  item: ShippedItem,
+  selfSlot: number,
+  locName: string | undefined,
+): FeedRow | null {
+  if (item.sender.slot !== selfSlot) return null; // only YOUR finds
+  const slot = locName ? parseCatchSlot(locName) ?? undefined : undefined;
+  if (slot == null) return null; // not a Catch Slot source → not a catch (cosmetic-only)
+  return {
+    id: itemId('sent', item as unknown as Item, 0),
+    kind: 'catch',
+    at: Date.now(),
+    item: item.name,
+    // Only name the recipient when it's another world; solo ships leave it
+    // undefined so the UI renders "You caught X -> item" with no "to" tail.
+    player: item.receiver.slot === selfSlot ? undefined : item.receiver.alias,
+    slot,
+    flags: item.flags,
+  };
 }
 
 /**
@@ -84,26 +165,19 @@ export function useFeed(
         at: Date.now(),
         item: item.name,
         player: item.sender.alias,
+        flags: item.flags,
       });
     });
 
     const pkg = client.package.findPackage(GAME_NAME);
     const onItemSent = (_text: string, item: Item) => {
-      // Only YOUR finds, and only those shipped to another world (a real "catch").
-      if (item.sender.slot !== selfSlot) return;
-      if (item.receiver.slot === selfSlot) return; // your own progression, not a ship
-      // The location the item shipped FROM is a "Catch Slot #k" in your world; its
-      // k indexes the caught-identity order so the UI can name what you caught.
+      // A "catch" is defined by its SOURCE Catch Slot #k, not the receiver, so
+      // solo seeds (you ship to yourself) still produce catch rows. The pure
+      // classifier returns null for non-catch sends (foreign sender or a
+      // self-targeted item that did NOT come from a Catch Slot).
       const locName = pkg?.reverseLocationTable[item.locationId];
-      const slot = locName ? parseCatchSlot(locName) ?? undefined : undefined;
-      push({
-        id: itemId('sent', item, 0),
-        kind: 'catch',
-        at: Date.now(),
-        item: item.name,
-        player: item.receiver.alias,
-        slot,
-      });
+      const row = classifyShippedItem(item, selfSlot, locName);
+      if (row) push(row);
     };
 
     const onItemsReceived = (items: Item[], startingIndex: number) => {
@@ -115,6 +189,7 @@ export function useFeed(
           at: Date.now(),
           item: item.name,
           player: item.sender.alias,
+          flags: item.flags,
         });
       });
     };

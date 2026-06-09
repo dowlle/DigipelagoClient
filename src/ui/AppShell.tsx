@@ -208,43 +208,67 @@ function MobileTabs({ view, setView }: { view: View; setView: (v: View) => void 
   );
 }
 
-function ModeTabs({ mode, setMode, locked }: { mode: Mode; setMode: (m: Mode) => void; locked?: boolean }) {
+// The lock now reads ON the switch buttons themselves (backlog #5): when the
+// seed fixes the mode (allow_mode_switch: false) every NON-active mode button
+// shows a small lock glyph + a "Locked by seed" tooltip and dims, while the
+// chosen mode reads normally. Pure presentation: the buttons stay non-interactive
+// exactly as before and nothing here gates AP beatability (input mode never did).
+const MODE_LOCK_TITLE = 'Locked by seed (mode switching is off)';
+
+/** Per-button lock affordance for the mode switch. A button only reads as
+ *  "locked" when modes are seed-locked AND it is not the active mode; the active
+ *  button always reads normally so it shows the mode the seed fixed you to.
+ *  Pure + DOM-free so it can be unit-tested without a renderer. */
+export function modeButtonLock(active: boolean, locked: boolean): { showLock: boolean; title?: string } {
+  const showLock = locked && !active;
+  return { showLock, title: showLock ? MODE_LOCK_TITLE : undefined };
+}
+
+function ModeButton({
+  label,
+  active,
+  locked,
+  onSelect,
+  title,
+}: {
+  label: string;
+  active: boolean;
+  locked: boolean;
+  onSelect: () => void;
+  title?: string;
+}) {
+  const { showLock, title: lockTitle } = modeButtonLock(active, locked);
+  return (
+    <button
+      type="button"
+      className="dp-toggle-btn inline-flex items-center gap-1"
+      data-active={active}
+      disabled={locked}
+      onClick={() => !locked && onSelect()}
+      // No .dp-toggle-btn:disabled rule exists in index.css, so dim the locked,
+      // non-active buttons inline (mirrors FreeTextPanel's cursor-not-allowed/opacity).
+      style={showLock ? { opacity: 0.55, cursor: 'not-allowed' } : undefined}
+      title={lockTitle ?? title}
+      aria-label={showLock ? `${label} (locked by seed)` : undefined}
+    >
+      {showLock && <Lock size={11} aria-hidden />}
+      {label}
+    </button>
+  );
+}
+
+function ModeTabs({ mode, setMode, locked = false }: { mode: Mode; setMode: (m: Mode) => void; locked?: boolean }) {
   return (
     <div className="flex items-center gap-2">
-      <button
-        className="dp-toggle-btn"
-        data-active={mode === 'text'}
-        disabled={locked}
-        onClick={() => !locked && setMode('text')}
-      >
-        Free-text
-      </button>
-      <button
-        className="dp-toggle-btn"
-        data-active={mode === 'mc'}
-        disabled={locked}
-        onClick={() => !locked && setMode('mc')}
-      >
-        Silhouette
-      </button>
-      <button
-        className="dp-toggle-btn"
-        data-active={mode === 'random'}
-        disabled={locked}
-        onClick={() => !locked && setMode('random')}
+      <ModeButton label="Free-text" active={mode === 'text'} locked={locked} onSelect={() => setMode('text')} />
+      <ModeButton label="Silhouette" active={mode === 'mc'} locked={locked} onSelect={() => setMode('mc')} />
+      <ModeButton
+        label="Random"
+        active={mode === 'random'}
+        locked={locked}
+        onSelect={() => setMode('random')}
         title="Each round randomly rolls type-the-name or multiple-choice"
-      >
-        Random
-      </button>
-      {locked && (
-        <span
-          className="ml-1 inline-flex items-center gap-1 text-[11px]"
-          style={{ color: 'var(--dp-text-faint)', fontFamily: 'var(--dp-font-body)' }}
-          title="The seed locked this mode (allow_mode_switch: false)"
-        >
-          <Lock size={11} aria-hidden /> locked by seed
-        </span>
-      )}
+      />
     </div>
   );
 }
@@ -632,7 +656,16 @@ export function AppShell() {
         <StatusCards state={state} slotData={slotData} bump={capBump} />
         <ModeTabs mode={mode} setMode={setMode} locked={modeLocked} />
         {mode === 'text'
-          ? <FreeTextPanel hard={hard} setHard={setHard} locked={modeLocked} />
+          ? (
+              // Free-text play pairs the input with the live Digidex so you can
+              // browse what's catchable while you type (mirrors Pokepelago). The
+              // dex is read-only and name-hides uncaught entries, so it changes
+              // nothing about AP beatability.
+              <div className="flex flex-col gap-4">
+                <FreeTextPanel hard={hard} setHard={setHard} locked={modeLocked} />
+                <DexGrid />
+              </div>
+            )
           : <MultipleChoice
               meter={mcMeter}
               foodAvailable={foodAvailable}

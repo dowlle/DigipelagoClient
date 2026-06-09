@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { dataset, isRoot } from '../data/dataset';
 import { buildState } from './state';
 import { buildChoices, guessableTargets, pickTarget, variantBase, type Rng } from './mc';
+import { attrTrackerCells } from '../ui/StatusCards';
 import type { Digimon, GameState, SlotData } from './types';
 
 const SLOT: SlotData = {
@@ -142,6 +143,72 @@ describe('buildChoices telemetry (FEAT-03)', () => {
     const teleAbsent = buildChoices(t, entries, 4, seq(rngSeq), 'telemetry');
     expect(teleEmpty.map((d) => d.id)).toEqual(hard.map((d) => d.id));
     expect(teleAbsent.map((d) => d.id)).toEqual(hard.map((d) => d.id));
+  });
+});
+
+describe('buildChoices unlocked-attribute distractor restriction (item #3)', () => {
+  // The distractor restriction lives at the call site (MultipleChoice.tsx passes
+  // a pre-filtered unlocked-attribute list as allEntries). These tests verify the
+  // contract buildChoices honours: it only ever draws distractors from whatever
+  // entry list it is handed, so feeding it an unlocked-only subset keeps every
+  // option (target + distractors) inside the unlocked set.
+  const byName = (n: string) => entries.find((d) => d.name === n)!;
+
+  it('only returns distractors whose attribute is in the supplied unlocked set', () => {
+    const unlocked = new Set(['Vaccine', 'Data']);
+    const unlockedEntries = entries.filter((d) => unlocked.has(d.attribute));
+    // Target must itself be unlocked (true at the call site: its attribute gates it).
+    const target = unlockedEntries.find((d) => d.attribute === 'Vaccine')!;
+    expect(target).toBeTruthy();
+    const choices = buildChoices(target, unlockedEntries, 4, seq([0.1, 0.5, 0.3, 0.7, 0.2, 0.9]));
+    expect(choices.some((d) => d.id === target.id)).toBe(true);
+    for (const c of choices) {
+      expect(unlocked.has(c.attribute)).toBe(true);
+    }
+  });
+
+  it('fills 4 unique options from a single-attribute unlocked pool (sphere-0 sufficiency)', () => {
+    const vaccineOnly = entries.filter((d) => d.attribute === 'Vaccine');
+    // Sphere-0 (one attribute key) must still have >= 4 distractors available.
+    expect(vaccineOnly.length).toBeGreaterThanOrEqual(4);
+    const target = byName('Agumon');
+    expect(target.attribute).toBe('Vaccine');
+    const choices = buildChoices(target, vaccineOnly, 4, seq([0.1, 0.4, 0.6, 0.2, 0.8, 0.3, 0.5]));
+    expect(choices).toHaveLength(4);
+    expect(new Set(choices.map((d) => d.id)).size).toBe(4);
+    expect(choices.some((d) => d.id === target.id)).toBe(true);
+    for (const c of choices) expect(c.attribute).toBe('Vaccine');
+  });
+
+  it('degrades gracefully (never throws, returns up to n) when the unlocked pool is tiny', () => {
+    const target = byName('Agumon');
+    // A pool of just the target plus two others: fewer than n distractors exist,
+    // so buildChoices must return what it can (3 unique) without throwing.
+    const others = entries.filter((d) => d.id !== target.id).slice(0, 2);
+    const tinyPool = [target, ...others];
+    const choices = buildChoices(target, tinyPool, 4, seq([0.1, 0.5, 0.3]));
+    expect(choices.length).toBeLessThanOrEqual(4);
+    expect(new Set(choices.map((d) => d.id)).size).toBe(choices.length);
+    expect(choices.some((d) => d.id === target.id)).toBe(true);
+    for (const c of choices) expect(tinyPool.some((p) => p.id === c.id)).toBe(true);
+  });
+});
+
+describe('attrTrackerCells (item #2 HUD helper)', () => {
+  it('returns the four gameplay attributes in a stable order with held flags', () => {
+    const held = new Set(['Vaccine', 'Data']);
+    const cells = attrTrackerCells(held);
+    expect(cells.map((c) => c.attr)).toEqual(['Vaccine', 'Virus', 'Data', 'Free']);
+    expect(cells.find((c) => c.attr === 'Vaccine')!.held).toBe(true);
+    expect(cells.find((c) => c.attr === 'Data')!.held).toBe(true);
+    expect(cells.find((c) => c.attr === 'Virus')!.held).toBe(false);
+    expect(cells.find((c) => c.attr === 'Free')!.held).toBe(false);
+  });
+
+  it('all locked when nothing is held', () => {
+    const cells = attrTrackerCells(new Set());
+    expect(cells).toHaveLength(4);
+    expect(cells.every((c) => !c.held)).toBe(true);
   });
 });
 

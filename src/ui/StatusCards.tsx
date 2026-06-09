@@ -13,6 +13,31 @@ import { useMemo } from 'react';
 import { getDigimon } from '../data/dataset';
 import { goalProgress } from '../game/guess';
 import type { GameState, SlotData } from '../game/types';
+import { attrColor } from './attrColor';
+import { attrCue, type AttrShape } from './attrCue';
+
+// The four gameplay attributes shown in the unlock tracker. This is deliberately
+// the canonical Vaccine/Virus/Data/Free set (the same four named in the task and
+// driven by attrCue/attrColor), NOT every attribute in the dataset: the dataset
+// also contains Variable/Unknown entries, but those are not gameplay-gating
+// attributes, so the tracker intentionally omits them. This is by design, not a
+// bug - a future reader should not "fix" it by enumerating dataset.attributes.
+const TRACKED_ATTRS = ['Vaccine', 'Virus', 'Data', 'Free'] as const;
+
+/** Pure held/locked predicate for the tracker, kept testable in isolation. */
+export interface AttrTrackerCell {
+  attr: string;
+  held: boolean;
+}
+
+/**
+ * Map the four gameplay attributes to {attr, held} in a stable order, driven by
+ * the held-attribute set (state.heldAttributes). Display only: this reads unlock
+ * state, it never gates anything (AP beatability is untouched).
+ */
+export function attrTrackerCells(heldAttributes: Set<string>): AttrTrackerCell[] {
+  return TRACKED_ATTRS.map((attr) => ({ attr, held: heldAttributes.has(attr) }));
+}
 
 /** SVG progress ring (ported from hud-deep.jsx Ring), token-driven colour. */
 function Ring({
@@ -67,6 +92,80 @@ function orderedLevels(slot: SlotData): string[] {
 function goalSublabel(slot: SlotData): string {
   if (slot.goal === 'level' && slot.goal_level) return `${slot.goal_level} caught`;
   return 'Total caught';
+}
+
+// Local, minimal shape switch (mirrors the AttrShapeIcon pattern in
+// MultipleChoice.tsx). Kept local on purpose: lifting the SVG into a shared
+// module would widen the MultipleChoice.tsx diff and risk colliding with the
+// later modes+dex step, so a small amount of duplication is the tighter choice.
+function AttrShapeIcon({ shape, color }: { shape: AttrShape; color: string }) {
+  const common = { width: 11, height: 11, viewBox: '0 0 12 12', 'aria-hidden': true } as const;
+  const glow = { filter: `drop-shadow(0 0 3px ${color})` } as const;
+  switch (shape) {
+    case 'square':
+      return <svg {...common} style={glow}><rect x="1.5" y="1.5" width="9" height="9" rx="1.5" fill={color} /></svg>;
+    case 'triangle':
+      return <svg {...common} style={glow}><path d="M6 1.5 L10.5 10 L1.5 10 Z" fill={color} /></svg>;
+    case 'diamond':
+      return <svg {...common} style={glow}><path d="M6 1 L11 6 L6 11 L1 6 Z" fill={color} /></svg>;
+    case 'hexagon':
+      return <svg {...common} style={glow}><path d="M3.2 1.7 H8.8 L11 6 L8.8 10.3 H3.2 L1 6 Z" fill={color} /></svg>;
+    case 'ring':
+      return <svg {...common} style={glow}><circle cx="6" cy="6" r="4.2" fill="none" stroke={color} strokeWidth="2" /></svg>;
+    case 'circle':
+    default:
+      return <svg {...common} style={glow}><circle cx="6" cy="6" r="4.5" fill={color} /></svg>;
+  }
+}
+
+/**
+ * Attribute unlock tracker (HUD): an always-visible row of the four gameplay
+ * attributes showing held vs locked. Held cells carry the attribute hue
+ * (attrColor) PLUS the shape + label (attrCue) so unlock state survives loss of
+ * colour vision; locked cells dim and outline the shape so the locked state is
+ * legible without relying on colour. Display only - reads state.heldAttributes,
+ * adds no gate.
+ */
+function AttrTracker({ state }: { state: GameState }) {
+  const cells = attrTrackerCells(state.heldAttributes);
+  return (
+    <div className="dp-card flex flex-col justify-center px-4 py-3.5 sm:col-span-3">
+      <div className="dp-stat-label mb-2">Attributes unlocked</div>
+      <div className="flex flex-wrap items-center gap-2">
+        {cells.map(({ attr, held }) => {
+          const cue = attrCue(attr);
+          const color = attrColor(attr);
+          return (
+            <span
+              key={attr}
+              className="flex items-center gap-1.5 rounded-[7px] px-2.5 py-1.5 text-[11px] font-semibold"
+              title={held ? `${cue.full} - unlocked` : `${cue.full} - locked`}
+              aria-label={held ? `${cue.full} attribute unlocked` : `${cue.full} attribute locked`}
+              style={{
+                fontFamily: 'var(--dp-font-disp)',
+                background: held
+                  ? `color-mix(in srgb, ${color} 14%, transparent)`
+                  : 'var(--dp-line-soft)',
+                border: `1px solid ${held ? color : 'var(--dp-line)'}`,
+                color: held ? 'var(--dp-text)' : 'var(--dp-text-faint)',
+                opacity: held ? 1 : 0.55,
+              }}
+            >
+              <AttrShapeIcon shape={cue.shape} color={held ? color : 'var(--dp-text-faint)'} />
+              <span aria-hidden>{cue.full}</span>
+              <span
+                className="text-[10px] font-bold leading-none"
+                style={{ color: 'var(--dp-text-mid)' }}
+                aria-hidden
+              >
+                {held ? cue.label : 'locked'}
+              </span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export function StatusCards({
@@ -169,6 +268,9 @@ export function StatusCards({
           </div>
         </div>
       </div>
+
+      {/* Attribute unlock tracker - full-width row under the three stat cards. */}
+      <AttrTracker state={state} />
     </div>
   );
 }

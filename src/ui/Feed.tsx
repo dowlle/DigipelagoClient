@@ -11,6 +11,7 @@
 
 import { ArrowLeft, ArrowRight, Box } from 'lucide-react';
 import type { FeedRow as Row } from '../ap/feed';
+import { itemFlagColor } from '../ap/feed';
 import { Avatar } from './moments/Avatar';
 
 /** Compact "Xs / Xm / Xh ago" label. */
@@ -53,7 +54,10 @@ function FeedRowView({ row, now, big = false }: { row: Row; now: number; big?: b
           style={{ color: 'var(--dp-text-mid)', fontFamily: 'var(--dp-font-body)' }}
         >
           <ArrowRight size={13} style={{ color: 'var(--dp-secondary)' }} />
-          <span className="font-semibold" style={{ color: 'var(--dp-secondary)', fontFamily: 'var(--dp-font-disp)' }}>
+          <span
+            className="font-semibold"
+            style={{ color: itemFlagColor(row.flags) ?? 'var(--dp-secondary)', fontFamily: 'var(--dp-font-disp)' }}
+          >
             {row.item}
           </span>
           {row.player && (
@@ -71,7 +75,7 @@ function FeedRowView({ row, now, big = false }: { row: Row; now: number; big?: b
       <div className={base} style={{ borderColor: 'var(--dp-line-soft)' }}>
         <ArrowLeft size={13} style={{ color: 'var(--dp-good)' }} className="shrink-0" />
         <span className={sz} style={{ color: 'var(--dp-text)', fontFamily: 'var(--dp-font-body)' }}>
-          <b style={{ color: 'var(--dp-good)', fontFamily: 'var(--dp-font-disp)' }}>{row.item}</b>
+          <b style={{ color: itemFlagColor(row.flags) ?? 'var(--dp-good)', fontFamily: 'var(--dp-font-disp)' }}>{row.item}</b>
         </span>
         {row.player && (
           <span className="text-[11px]" style={{ color: 'var(--dp-text-faint)' }}>
