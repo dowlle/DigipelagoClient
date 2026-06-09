@@ -10,19 +10,28 @@
 // nothing about gating.
 
 import { useMemo } from 'react';
-import { getDigimon } from '../data/dataset';
+import { dataset, getDigimon } from '../data/dataset';
 import { goalProgress } from '../game/guess';
 import type { GameState, SlotData } from '../game/types';
 import { attrColor } from './attrColor';
 import { attrCue, type AttrShape } from './attrCue';
 
-// The four gameplay attributes shown in the unlock tracker. This is deliberately
-// the canonical Vaccine/Virus/Data/Free set (the same four named in the task and
-// driven by attrCue/attrColor), NOT every attribute in the dataset: the dataset
-// also contains Variable/Unknown entries, but those are not gameplay-gating
-// attributes, so the tracker intentionally omits them. This is by design, not a
-// bug - a future reader should not "fix" it by enumerating dataset.attributes.
-const TRACKED_ATTRS = ['Vaccine', 'Virus', 'Data', 'Free'] as const;
+// Display order for the attribute unlock tracker. EVERY attribute in the seed's
+// dataset gates progression - each one has a Key and its cells count toward
+// pool_size - so the tracker shows them ALL, the four primaries first, then
+// Variable/Unknown. Driven by dataset.attributes so it can never drift from the
+// real gating set. (This previously hardcoded only Vaccine/Virus/Data/Free and hid
+// Variable/Unknown; that was wrong - those ARE gating attributes, they just cannot
+// be chosen as the STARTING attribute, so you only ever unlock them via a Key.)
+const ATTR_DISPLAY_ORDER = ['Vaccine', 'Virus', 'Data', 'Free', 'Variable', 'Unknown'];
+
+function orderAttributes(attributes: string[]): string[] {
+  const rank = (a: string) => {
+    const i = ATTR_DISPLAY_ORDER.indexOf(a);
+    return i < 0 ? ATTR_DISPLAY_ORDER.length : i;
+  };
+  return [...attributes].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
 
 /** Pure held/locked predicate for the tracker, kept testable in isolation. */
 export interface AttrTrackerCell {
@@ -31,12 +40,12 @@ export interface AttrTrackerCell {
 }
 
 /**
- * Map the four gameplay attributes to {attr, held} in a stable order, driven by
- * the held-attribute set (state.heldAttributes). Display only: this reads unlock
- * state, it never gates anything (AP beatability is untouched).
+ * Map every gating attribute (from the dataset) to {attr, held} in display order,
+ * driven by the held-attribute set (state.heldAttributes). Display only: this reads
+ * unlock state, it never gates anything (AP beatability is untouched).
  */
-export function attrTrackerCells(heldAttributes: Set<string>): AttrTrackerCell[] {
-  return TRACKED_ATTRS.map((attr) => ({ attr, held: heldAttributes.has(attr) }));
+export function attrTrackerCells(heldAttributes: Set<string>, attributes: string[]): AttrTrackerCell[] {
+  return orderAttributes(attributes).map((attr) => ({ attr, held: heldAttributes.has(attr) }));
 }
 
 /** SVG progress ring (ported from hud-deep.jsx Ring), token-driven colour. */
@@ -119,15 +128,15 @@ function AttrShapeIcon({ shape, color }: { shape: AttrShape; color: string }) {
 }
 
 /**
- * Attribute unlock tracker (HUD): an always-visible row of the four gameplay
- * attributes showing held vs locked. Held cells carry the attribute hue
+ * Attribute unlock tracker (HUD): an always-visible row of every gating
+ * attribute showing held vs locked. Held cells carry the attribute hue
  * (attrColor) PLUS the shape + label (attrCue) so unlock state survives loss of
  * colour vision; locked cells dim and outline the shape so the locked state is
  * legible without relying on colour. Display only - reads state.heldAttributes,
  * adds no gate.
  */
 function AttrTracker({ state }: { state: GameState }) {
-  const cells = attrTrackerCells(state.heldAttributes);
+  const cells = attrTrackerCells(state.heldAttributes, dataset.attributes);
   return (
     <div className="dp-card flex flex-col justify-center px-4 py-3.5 sm:col-span-3">
       <div className="dp-stat-label mb-2">Attributes unlocked</div>

@@ -195,19 +195,23 @@ describe('buildChoices unlocked-attribute distractor restriction (item #3)', () 
 });
 
 describe('attrTrackerCells (item #2 HUD helper)', () => {
-  it('returns the four gameplay attributes in a stable order with held flags', () => {
-    const held = new Set(['Vaccine', 'Data']);
-    const cells = attrTrackerCells(held);
-    expect(cells.map((c) => c.attr)).toEqual(['Vaccine', 'Virus', 'Data', 'Free']);
+  // The seed's full gating set (dataset order is alphabetical); every one gates.
+  const ALL_ATTRS = ['Data', 'Free', 'Unknown', 'Vaccine', 'Variable', 'Virus'];
+
+  it('shows EVERY gating attribute (primaries first, then Variable/Unknown) with held flags', () => {
+    const held = new Set(['Vaccine', 'Variable']);
+    const cells = attrTrackerCells(held, ALL_ATTRS);
+    expect(cells.map((c) => c.attr)).toEqual(['Vaccine', 'Virus', 'Data', 'Free', 'Variable', 'Unknown']);
     expect(cells.find((c) => c.attr === 'Vaccine')!.held).toBe(true);
-    expect(cells.find((c) => c.attr === 'Data')!.held).toBe(true);
+    // The bug Stef hit: a held non-primary attribute must show AND read as held.
+    expect(cells.find((c) => c.attr === 'Variable')!.held).toBe(true);
     expect(cells.find((c) => c.attr === 'Virus')!.held).toBe(false);
-    expect(cells.find((c) => c.attr === 'Free')!.held).toBe(false);
+    expect(cells.find((c) => c.attr === 'Unknown')!.held).toBe(false);
   });
 
   it('all locked when nothing is held', () => {
-    const cells = attrTrackerCells(new Set());
-    expect(cells).toHaveLength(4);
+    const cells = attrTrackerCells(new Set(), ALL_ATTRS);
+    expect(cells).toHaveLength(6);
     expect(cells.every((c) => !c.held)).toBe(true);
   });
 });
