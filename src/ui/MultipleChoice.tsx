@@ -32,6 +32,7 @@ import type { Digimon } from '../game/types';
 import type { WrongPickMeter } from './useWrongPickMeter';
 import { SpriteReveal } from './SpriteReveal';
 import { SpriteConsentCard } from './SpriteConsentPrompt';
+import { SpriteHealthBanner } from './SpriteHealthBanner';
 import { useSpriteConsent } from './spriteConsent';
 import { attrColor } from './attrColor';
 import { attrCue, type AttrShape } from './attrCue';
@@ -271,6 +272,7 @@ export function MultipleChoice({
 
   return (
     <div className="dp-card overflow-hidden p-5">
+      <SpriteHealthBanner />
       {target ? (
         <div className="flex flex-col gap-6 lg:flex-row">
           {/* ── hero stage ── */}

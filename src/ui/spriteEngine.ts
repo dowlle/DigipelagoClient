@@ -375,6 +375,38 @@ async function buildBlob(
   }
 }
 
+// --- sprite health -------------------------------------------------------------
+// Counts final outcomes so the UI can tell the user when image fetches are
+// MOSTLY failing (the classic cause: an ad/privacy blocker blocking
+// digi-api.com, which a clean Firefox/Chrome does not do). Tiny external store.
+
+let healthVersion = 0;
+let fetchSuccesses = 0;
+let fetchFailures = 0;
+const healthListeners = new Set<() => void>();
+
+function bumpHealth(ok: boolean): void {
+  if (ok) fetchSuccesses++;
+  else fetchFailures++;
+  healthVersion++;
+  for (const l of healthListeners) l();
+}
+
+export function subscribeSpriteHealth(listener: () => void): () => void {
+  healthListeners.add(listener);
+  return () => {
+    healthListeners.delete(listener);
+  };
+}
+
+export function spriteHealthVersion(): number {
+  return healthVersion;
+}
+
+export function getSpriteHealth(): { successes: number; failures: number } {
+  return { successes: fetchSuccesses, failures: fetchFailures };
+}
+
 // Per-session memo of resolved object URLs, so repeated mounts reuse one URL.
 const resolved = new Map<string, { url: string; isCutout: boolean }>();
 // In-flight dedupe: many dex cells can share a sprite; one fetch serves all.
@@ -446,11 +478,13 @@ export function loadSprite(
   const p = resolveSprite(srcUrl, base, recipe ?? null, rHash)
     .then((out) => {
       resolved.set(key, out);
+      bumpHealth(true);
       return out;
     })
     .catch((e: unknown) => {
       // Surface WHY a sprite failed (filter the console on [digipelago:sprites]).
       console.warn(`[digipelago:sprites] ${base} failed:`, e instanceof Error ? e.message : e);
+      bumpHealth(false);
       throw e;
     })
     .finally(() => inflight.delete(key));

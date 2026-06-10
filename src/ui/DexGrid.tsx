@@ -6,6 +6,7 @@ import type { GameState, Digimon, SlotData } from '../game/types';
 import { attrColor } from './attrColor';
 import { Sprite } from './Sprite';
 import { SpriteConsentBanner } from './SpriteConsentPrompt';
+import { SpriteHealthBanner } from './SpriteHealthBanner';
 import { useInViewport } from './useInViewport';
 
 // Sprite Studio (cutout tuner modal) is lazy: it only loads when a cell is
@@ -374,6 +375,7 @@ export function DexGrid() {
   return (
     <div className="dp-panel p-4">
       <SpriteConsentBanner />
+      <SpriteHealthBanner />
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <strong className="text-base">Digidex</strong>
         {/* Flag D: generic counts — captured / total, never an attribute goal. */}
