@@ -42,6 +42,11 @@ export function Sprite({
   // Real-shape silhouette via CSS mask tinted with a palette token.
   if (shadow && isCutout) {
     const maskStyle: CSSProperties = {
+      // A masked <div> has no intrinsic size (unlike the <img> paths), so fill
+      // the parent and let the caller's max-w/max-h classes cap it; without
+      // this the silhouette computes to 0x0 and renders as nothing.
+      width: '100%',
+      height: '100%',
       WebkitMaskImage: `url("${url}")`,
       maskImage: `url("${url}")`,
       WebkitMaskSize: 'contain',
