@@ -159,6 +159,9 @@ export function ConnectionPanel() {
           </span>
           <div className="flex flex-wrap gap-2">
             {saved.map((conn) => (
+              // The server:port is always shown alongside the label: the same
+              // slot name can exist on different AP servers, so the label alone
+              // is ambiguous.
               <button
                 key={conn.id}
                 type="button"
@@ -167,6 +170,9 @@ export function ConnectionPanel() {
                 title={`${conn.server}:${conn.port} (${conn.slot_name})`}
               >
                 {conn.label || conn.slot_name || conn.server}
+                <span className="ml-1.5" style={{ color: 'var(--dp-text-faint)' }}>
+                  {conn.server}:{conn.port}
+                </span>
               </button>
             ))}
           </div>

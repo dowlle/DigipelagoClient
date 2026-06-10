@@ -9,8 +9,9 @@ const LS_KEY = 'digipelago:theme';
 const UNLOCKS_KEY = 'digipelago:unlocks';
 
 // Unlock-aware palette catalogue. Tide is always available; Terminal/Vapor are
-// gated by a `gamesCompleted` counter (§7). For MVP the gate ships as a no-op
-// (all unlocked) but the data shape is kept so the unlock seam plugs in later.
+// gated by a `gamesCompleted` counter (§7): your first multiworld win unlocks
+// Terminal, your second unlocks Vapor. Wins are counted once per seed (see
+// game/wins.ts); explicit unlockedThemes entries also unlock (server sync).
 export type Unlock = 'always' | { gamesCompleted: number };
 export interface ThemeMeta {
   id: ThemeId;
@@ -21,8 +22,8 @@ export interface ThemeMeta {
 
 export const THEMES: ThemeMeta[] = [
   { id: 'tide', name: 'Tide', tagline: 'Default · calm deep-teal', unlock: 'always' },
-  { id: 'terminal', name: 'Terminal', tagline: 'Phosphor green on near-black', unlock: { gamesCompleted: 0 } },
-  { id: 'vapor', name: 'Vapor', tagline: 'Synthwave magenta + cyan', unlock: { gamesCompleted: 0 } },
+  { id: 'terminal', name: 'Terminal', tagline: 'Phosphor green on near-black', unlock: { gamesCompleted: 1 } },
+  { id: 'vapor', name: 'Vapor', tagline: 'Synthwave magenta + cyan', unlock: { gamesCompleted: 2 } },
 ];
 
 const THEME_IDS = THEMES.map((t) => t.id);
@@ -71,8 +72,34 @@ export function mergeUnlockedThemeIds(ids: string[]): ThemeId[] {
   return merged;
 }
 
+/** Record a completed game (multiworld goal reached). Bumps the win counter and
+ *  converts any newly crossed gamesCompleted gates into explicit unlockedThemes
+ *  entries (explicit so they sync to the account). Returns the theme ids that
+ *  this completion newly unlocked (empty when storage is unavailable or nothing
+ *  new unlocked). The caller is responsible for only counting a win once per
+ *  seed (game/wins.ts). */
+export function recordGameCompletion(): ThemeId[] {
+  const cur = loadUnlocks();
+  const next: Unlocks = { ...cur, gamesCompleted: cur.gamesCompleted + 1 };
+  const newly = THEMES.filter(
+    (t) => !isThemeUnlocked(t.id, cur) && isThemeUnlocked(t.id, next),
+  ).map((t) => t.id);
+  try {
+    localStorage.setItem(
+      UNLOCKS_KEY,
+      JSON.stringify({
+        gamesCompleted: next.gamesCompleted,
+        unlockedThemes: Array.from(new Set([...cur.unlockedThemes, ...newly])),
+      }),
+    );
+  } catch {
+    return []; // storage unavailable: nothing persisted, report nothing unlocked
+  }
+  return newly;
+}
+
 /** Is a palette currently unlocked? Tide always; others by gamesCompleted or an
- *  explicit unlockedThemes entry. MVP no-op flag keeps all three available. */
+ *  explicit unlockedThemes entry. */
 export function isThemeUnlocked(id: ThemeId, unlocks: Unlocks = loadUnlocks()): boolean {
   const meta = THEMES.find((t) => t.id === id);
   if (!meta || meta.unlock === 'always') return true;
@@ -85,7 +112,11 @@ function load(): ThemeId {
     const stored = localStorage.getItem(LS_KEY);
     // back-compat: map legacy two-state ids onto the new palettes.
     if (stored === 'digimon' || stored === 'default' || stored === '' || stored === null) return 'tide';
-    if ((THEME_IDS as string[]).includes(stored)) return stored as ThemeId;
+    // A stored palette the player no longer has unlocked (the gates went from
+    // the MVP no-op to win-gated) falls back to the always-on default.
+    if ((THEME_IDS as string[]).includes(stored) && isThemeUnlocked(stored as ThemeId)) {
+      return stored as ThemeId;
+    }
     return 'tide';
   } catch {
     return 'tide';

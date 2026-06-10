@@ -48,3 +48,13 @@ export function goalProgress(
   }
   return { current, target: slot.goal_count };
 }
+
+/** Whether the seed's goal is met (goal_count caught of the relevant pool). */
+export function goalReached(
+  st: GameState,
+  slot: SlotData,
+  metaOf: (id: number) => Digimon | undefined,
+): boolean {
+  const { current, target } = goalProgress(st, slot, metaOf);
+  return target > 0 && current >= target;
+}

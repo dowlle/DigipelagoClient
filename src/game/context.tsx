@@ -16,6 +16,7 @@ import { appendCaught, watchCaught } from '../ap/datastorage';
 import { catchSlotId, countCheckedCatchSlots } from '../ap/locations';
 import { recordEvent, flushTelemetry } from '../api/backend';
 import { DATASET_VERSION, getDigimon } from '../data/dataset';
+import { goalReached } from './guess';
 import { assertDatasetMatches, buildState } from './state';
 import type { GameState, SlotData } from './types';
 
@@ -39,6 +40,8 @@ export interface GameContextValue {
   connectionError: string | null;
   slotData: SlotData | null;
   state: GameState;
+  /** True once the seed's goal is met (derived; stays true for the session). */
+  isGoalReached: boolean;
   connect: (info: ConnectionInfo) => Promise<void>;
   disconnect: () => void;
   /** Dispatch a correct guess: check the next catch slot + record caught identity. */
@@ -77,6 +80,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const identityRef = useRef<Identity | null>(null);
   const connectedAtRef = useRef<number | null>(null); // telemetry session timer
 
+  const goalSentRef = useRef(false); // per-connection CLIENT_GOAL guard
+
   const recompute = useCallback((client: Client) => {
     const slot = slotDataRef.current;
     if (!slot) return;
@@ -84,6 +89,19 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const itemNames = client.items.received.map((i) => i.name);
     const next = buildState(slot, itemNames, caughtCountRef.current, caughtRef.current);
     setState(next);
+
+    // Goal met: report CLIENT_GOAL to the server (once per connection; the
+    // server ignores duplicates and the status can never be unset). This is
+    // what marks the slot as finished for the room (release/collect etc.).
+    if (!goalSentRef.current && goalReached(next, slot, getDigimon)) {
+      goalSentRef.current = true;
+      try {
+        client.goal();
+      } catch {
+        /* best-effort; a reconnect retries */
+      }
+      recordEvent({ event_type: 'goal' });
+    }
   }, []);
 
   const handlers = useMemo(
@@ -92,6 +110,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         assertDatasetMatches(slot, DATASET_VERSION); // refuse a drifted seed
         slotDataRef.current = slot;
         setSlotData(slot);
+        goalSentRef.current = false; // fresh connection: (re)assert goal if met
 
         // Telemetry: anonymous session start (fire-and-forget).
         connectedAtRef.current = Date.now();
@@ -160,11 +179,17 @@ export function GameProvider({ children }: { children: ReactNode }) {
     [ap.clientRef, recompute],
   );
 
+  const isGoalReached = useMemo(
+    () => (slotData ? goalReached(state, slotData, getDigimon) : false),
+    [state, slotData],
+  );
+
   const value: GameContextValue = {
     isConnected: ap.isConnected,
     connectionError: ap.connectionError,
     slotData,
     state,
+    isGoalReached,
     connect,
     disconnect: ap.disconnect,
     catchDigimon,

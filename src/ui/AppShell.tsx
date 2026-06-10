@@ -27,7 +27,9 @@ import { StatusCards } from './StatusCards';
 import { FeedRail, FullFeed } from './Feed';
 import { CatchToast } from './moments/CatchToast';
 import { CapacityToast } from './moments/CapacityToast';
+import { GoalToast } from './moments/GoalToast';
 import { useMoments } from './moments/useMoments';
+import { useWinUnlocks } from './moments/useWinUnlocks';
 import { useWrongPickMeter, staminaStorageKey } from './useWrongPickMeter';
 import { useFood } from './useFood';
 import { FOODS, FOOD_REFILL } from '../game/food';
@@ -502,7 +504,7 @@ function SettingsView({
 }
 
 export function AppShell() {
-  const { isConnected, slotData, state, disconnect, clientRef } = useGame();
+  const { isConnected, slotData, state, disconnect, clientRef, isGoalReached } = useGame();
   const [view, setView] = useState<View>('play');
   // Pre-connect "How to play" toggle (the guide is also a post-connect view).
   const [preHelp, setPreHelp] = useState(false);
@@ -597,6 +599,9 @@ export function AppShell() {
   // Read-only multiworld streams (S5) → activity feed + moment toasts.
   const apRows = useFeed(clientRef, isConnected);
   const { catchMoment, capacityMoment, capacityRows } = useMoments(state, apRows);
+
+  // Win moment: counts the win (once per seed) into palette unlocks + a toast.
+  const winMoment = useWinUnlocks(isGoalReached, clientRef, isConnected);
 
   // Merge AP rows with synthetic capacity beats, newest first. Catch rows are
   // enriched with the Digimon you caught: the feed stream only knows the shipped
@@ -725,6 +730,7 @@ export function AppShell() {
       {/* Moment toasts — fixed top-centre, above everything (S5). */}
       {catchMoment && <CatchToast moment={catchMoment} />}
       {capacityMoment && <CapacityToast moment={capacityMoment} />}
+      {winMoment && <GoalToast moment={winMoment} />}
 
       <div className="flex min-h-screen">
         <NavRail
