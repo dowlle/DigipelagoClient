@@ -31,12 +31,19 @@ export function parseCatchSlot(name: string): number | null {
  * Count how many of the server's checked locations are catch slots. The Victory
  * event has no address so it never appears in checkedLocations, but we filter by
  * name anyway to stay robust to any future non-catch locations.
+ *
+ * DEDUPED: archipelago.js appends RoomUpdate.checked_locations to its list
+ * without de-duplicating, and the AP server re-broadcasts already-checked ids
+ * (e.g. around !collect / !release). Counting raw occurrences inflated
+ * caughtCount to a multiple of the real count (Storage read 2766/950 = 3x922),
+ * which then wedges guessable() via the capacity cap. Count distinct ids only.
  */
 export function countCheckedCatchSlots(client: Client): number {
+  const checked = new Set(client.room.checkedLocations);
   const pkg = client.package.findPackage(GAME_NAME);
-  if (!pkg) return client.room.checkedLocations.length; // fallback: all checked are catches
+  if (!pkg) return checked.size; // fallback: all checked are catches
   let n = 0;
-  for (const id of client.room.checkedLocations) {
+  for (const id of checked) {
     const name = pkg.reverseLocationTable[id];
     if (name && parseCatchSlot(name) !== null) n += 1;
   }
