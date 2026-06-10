@@ -257,6 +257,19 @@ const MAX_CONCURRENT_FETCHES = 6;
 let activeFetches = 0;
 const fetchWaiters: (() => void)[] = [];
 
+// One-time loud warning when the device cache is unusable: without it every
+// page load re-fetches all ~900 sprites from Digi-API, which both hammers the
+// API and makes "why is the dex slow/blank" undiagnosable from screenshots.
+let cacheWarned = false;
+function warnCacheUnusable(stage: string, e: unknown): void {
+  if (cacheWarned) return;
+  cacheWarned = true;
+  console.warn(
+    `[digipelago:sprites] device cache unusable (${stage}); sprites will re-fetch every load:`,
+    e instanceof Error ? e.message : e,
+  );
+}
+
 async function withFetchSlot<T>(fn: () => Promise<T>): Promise<T> {
   if (activeFetches >= MAX_CONCURRENT_FETCHES) {
     await new Promise<void>((resolve) => fetchWaiters.push(resolve));
@@ -317,8 +330,8 @@ async function getRawBlob(srcUrl: string, base: string, cache: Cache | null): Pr
   if (cache) {
     try {
       await cache.put(rawKey, new Response(blob, { headers: { 'content-type': 'image/png' } }));
-    } catch {
-      /* cache write is best-effort */
+    } catch (e) {
+      warnCacheUnusable('raw write', e); // best-effort, but say so once
     }
   }
   return blob;
@@ -380,7 +393,9 @@ async function resolveSprite(
 
   // Device cache read (errors here must not trigger a second network fetch).
   let cache: Cache | null = null;
-  if (typeof caches !== 'undefined') {
+  if (typeof caches === 'undefined') {
+    warnCacheUnusable('no Cache API', 'caches is undefined in this context');
+  } else {
     try {
       cache = await caches.open(CACHE_NAME);
       const hit = await cache.match(cacheKey);
@@ -388,8 +403,9 @@ async function resolveSprite(
         const isCutout = hit.headers.get('x-cutout') === '1';
         return { url: URL.createObjectURL(await hit.blob()), isCutout };
       }
-    } catch {
+    } catch (e) {
       cache = null; // cache unusable: build without it
+      warnCacheUnusable('open/read', e);
     }
   }
 
@@ -401,8 +417,8 @@ async function resolveSprite(
         cacheKey,
         new Response(blob, { headers: { 'content-type': 'image/png', 'x-cutout': isCutout ? '1' : '0' } }),
       );
-    } catch {
-      /* cache write is best-effort */
+    } catch (e) {
+      warnCacheUnusable('processed write', e); // best-effort, but say so once
     }
   }
   return { url: URL.createObjectURL(blob), isCutout };
