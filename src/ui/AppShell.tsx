@@ -9,7 +9,7 @@
 // token-driven and fed by real context state.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette, Lock, Image as ImageIcon, User } from 'lucide-react';
+import { Play, Grid3x3, Globe, Settings as SettingsIcon, Palette, Lock, Image as ImageIcon, User, HelpCircle } from 'lucide-react';
 import { useGame } from '../game/context';
 import { useAuth } from '../api/useAuth';
 import { getThemes, putThemes, recordEvent } from '../api/backend';
@@ -19,6 +19,7 @@ import { getDigimon } from '../data/dataset';
 import type { McDifficulty } from '../game/mc';
 import { PaletteSwitcher } from './PaletteSwitcher';
 import { ConnectionPanel } from './ConnectionPanel';
+import { HowToPlay } from './HowToPlay';
 import { FreeTextPanel } from './FreeTextPanel';
 import { MultipleChoice } from './MultipleChoice';
 import { DexGrid } from './DexGrid';
@@ -32,7 +33,7 @@ import { useFood } from './useFood';
 import { FOODS, FOOD_REFILL } from '../game/food';
 import { setSpriteConsent, useSpriteConsent } from './spriteConsent';
 
-export type View = 'play' | 'dex' | 'multiworld' | 'settings';
+export type View = 'play' | 'dex' | 'multiworld' | 'help' | 'settings';
 type Mode = 'text' | 'mc' | 'random';
 
 const LS_CONN = 'digipelago:lastConnection';
@@ -134,6 +135,7 @@ function NavRail({
           active={view === 'multiworld'}
           onClick={() => setView('multiworld')}
         />
+        <NavItem icon={<HelpCircle {...ic} />} label="How to play" active={view === 'help'} onClick={() => setView('help')} />
         <NavItem icon={<SettingsIcon {...ic} />} label="Settings" active={view === 'settings'} onClick={() => setView('settings')} />
       </div>
       {/* Connection card */}
@@ -203,6 +205,7 @@ function MobileTabs({ view, setView }: { view: View; setView: (v: View) => void 
       {tab('play', 'Play', <Play {...ic} fill="currentColor" />)}
       {tab('dex', 'Digidex', <Grid3x3 {...ic} />)}
       {tab('multiworld', 'World', <Globe {...ic} />)}
+      {tab('help', 'Help', <HelpCircle {...ic} />)}
       {tab('settings', 'Settings', <SettingsIcon {...ic} />)}
     </nav>
   );
@@ -501,6 +504,8 @@ function SettingsView({
 export function AppShell() {
   const { isConnected, slotData, state, disconnect, clientRef } = useGame();
   const [view, setView] = useState<View>('play');
+  // Pre-connect "How to play" toggle (the guide is also a post-connect view).
+  const [preHelp, setPreHelp] = useState(false);
   const [mode, setMode] = useState<Mode>('text');
   // Hard-mode (clue) toggle is lifted here so the seed can set/lock it (it used to
   // live inside FreeTextPanel). 'free_text_hard' = mode 'text' + hard true.
@@ -631,7 +636,21 @@ export function AppShell() {
   }, []);
 
   // Pre-connect: force the connection screen regardless of the selected view.
+  // First-time players can flip to the How-to-play guide and back without
+  // connecting (preHelp is pre-connect-only UI state, not a routed view).
   if (!connected) {
+    if (preHelp) {
+      return (
+        <div className="min-h-screen text-white font-sans themed-bg p-4 md:p-8">
+          <div className="mx-auto w-full max-w-3xl">
+            <div className="mb-5">
+              <Wordmark />
+            </div>
+            <HowToPlay onBack={() => setPreHelp(false)} />
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen text-white font-sans themed-bg flex items-center justify-center p-4">
         <div className="w-full max-w-xl">
@@ -639,6 +658,15 @@ export function AppShell() {
             <Wordmark />
           </div>
           <ConnectionPanel />
+          <div className="mt-4 text-center">
+            <button
+              type="button"
+              className="dp-toggle-btn inline-flex items-center gap-1.5 text-sm"
+              onClick={() => setPreHelp(true)}
+            >
+              <HelpCircle size={14} aria-hidden /> First time? How to play
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -679,6 +707,8 @@ export function AppShell() {
     main = <DexGrid />;
   } else if (view === 'multiworld') {
     main = <FullFeed rows={feedRows} seats={seats} now={now} />;
+  } else if (view === 'help') {
+    main = <HowToPlay />;
   } else {
     main = (
       <SettingsView
