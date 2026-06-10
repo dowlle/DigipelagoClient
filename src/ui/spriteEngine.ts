@@ -96,11 +96,53 @@ function carve(data: Uint8ClampedArray, w: number, h: number): number {
   return opaqueBefore ? opaqueAfter / opaqueBefore : 0;
 }
 
-/** Fetch the sprite and produce a blob: a transparent cutout, or the boxed original. */
+// --- polite fetching ---------------------------------------------------------
+// A whole Digidex level can mount ~90 cells at once; an uncapped burst gets
+// throttled by Digi-API and the failures used to stick until remount. Cap the
+// concurrent fetches, queue the rest, and retry transient failures with backoff.
+
+const MAX_CONCURRENT_FETCHES = 6;
+let activeFetches = 0;
+const fetchWaiters: (() => void)[] = [];
+
+async function withFetchSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (activeFetches >= MAX_CONCURRENT_FETCHES) {
+    await new Promise<void>((resolve) => fetchWaiters.push(resolve));
+  }
+  activeFetches++;
+  try {
+    return await fn();
+  } finally {
+    activeFetches--;
+    fetchWaiters.shift()?.();
+  }
+}
+
+const RETRIES = 3;
+
+/** Fetch with backoff. Retries network errors, 429, and 5xx; other 4xx are final. */
+async function fetchSpriteBlob(srcUrl: string): Promise<Blob> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delay = 600 * 2 ** (attempt - 1) + Math.random() * 400;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    try {
+      const res = await fetch(srcUrl, { mode: 'cors' });
+      if (res.ok) return await res.blob();
+      lastError = new Error(`sprite fetch ${res.status}`);
+      if (res.status !== 429 && res.status < 500) break; // permanent 4xx
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError;
+}
+
+/** Produce the render blob from the fetched original: cutout when possible. */
 async function buildBlob(srcUrl: string, allowCutout: boolean): Promise<{ blob: Blob; isCutout: boolean }> {
-  const res = await fetch(srcUrl, { mode: 'cors' });
-  if (!res.ok) throw new Error(`sprite fetch ${res.status}`);
-  const raw = await res.blob();
+  const raw = await withFetchSlot(() => fetchSpriteBlob(srcUrl));
   if (!allowCutout || typeof createImageBitmap === 'undefined') return { blob: raw, isCutout: false };
   try {
     const bmp = await createImageBitmap(raw);
@@ -124,46 +166,61 @@ async function buildBlob(srcUrl: string, allowCutout: boolean): Promise<{ blob: 
 
 // Per-session memo of resolved object URLs, so repeated mounts reuse one URL.
 const resolved = new Map<string, { url: string; isCutout: boolean }>();
+// In-flight dedupe: many dex cells can share a sprite; one fetch serves all.
+const inflight = new Map<string, Promise<{ url: string; isCutout: boolean }>>();
 
-/**
- * Resolve a sprite URL to an on-device, ready-to-render object URL (transparent
- * cutout when possible, else boxed). Caller MUST have consent. Hits Digi-API at
- * most once per sprite per device (Cache API persists across reloads).
- */
-export async function loadSprite(srcUrl: string): Promise<{ url: string; isCutout: boolean }> {
-  const base = spriteBasename(srcUrl) ?? srcUrl;
-  const memo = resolved.get(base);
-  if (memo) return memo;
-
+async function resolveSprite(srcUrl: string, base: string): Promise<{ url: string; isCutout: boolean }> {
   const allowCutout = !isKnownFallback(srcUrl);
   const cacheKey = `https://digipelago.sprite-cache/${encodeURIComponent(base)}`;
 
+  // Device cache read (errors here must not trigger a second network fetch).
+  let cache: Cache | null = null;
   if (typeof caches !== 'undefined') {
     try {
-      const cache = await caches.open(CACHE_NAME);
+      cache = await caches.open(CACHE_NAME);
       const hit = await cache.match(cacheKey);
       if (hit) {
         const isCutout = hit.headers.get('x-cutout') === '1';
-        const url = URL.createObjectURL(await hit.blob());
-        const out = { url, isCutout };
-        resolved.set(base, out);
-        return out;
+        return { url: URL.createObjectURL(await hit.blob()), isCutout };
       }
-      const { blob, isCutout } = await buildBlob(srcUrl, allowCutout);
-      await cache.put(
-        cacheKey,
-        new Response(blob, { headers: { 'content-type': 'image/png', 'x-cutout': isCutout ? '1' : '0' } }),
-      );
-      const out = { url: URL.createObjectURL(blob), isCutout };
-      resolved.set(base, out);
-      return out;
     } catch {
-      /* fall through to no-cache build */
+      cache = null; // cache unusable: build without it
     }
   }
 
   const { blob, isCutout } = await buildBlob(srcUrl, allowCutout);
-  const out = { url: URL.createObjectURL(blob), isCutout };
-  resolved.set(base, out);
-  return out;
+  if (cache) {
+    try {
+      await cache.put(
+        cacheKey,
+        new Response(blob, { headers: { 'content-type': 'image/png', 'x-cutout': isCutout ? '1' : '0' } }),
+      );
+    } catch {
+      /* cache write is best-effort */
+    }
+  }
+  return { url: URL.createObjectURL(blob), isCutout };
+}
+
+/**
+ * Resolve a sprite URL to an on-device, ready-to-render object URL (transparent
+ * cutout when possible, else boxed). Caller MUST have consent. Hits Digi-API at
+ * most once per sprite per device (Cache API persists across reloads); fetches
+ * are capped/queued and retried, and concurrent callers share one resolution.
+ */
+export function loadSprite(srcUrl: string): Promise<{ url: string; isCutout: boolean }> {
+  const base = spriteBasename(srcUrl) ?? srcUrl;
+  const memo = resolved.get(base);
+  if (memo) return Promise.resolve(memo);
+  const pending = inflight.get(base);
+  if (pending) return pending;
+
+  const p = resolveSprite(srcUrl, base)
+    .then((out) => {
+      resolved.set(base, out);
+      return out;
+    })
+    .finally(() => inflight.delete(base));
+  inflight.set(base, p);
+  return p;
 }
