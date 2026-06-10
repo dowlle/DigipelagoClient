@@ -100,7 +100,15 @@ export function HardModeGuess() {
           className="flex items-center justify-center w-20 h-20 rounded-lg shrink-0"
           style={{ backgroundColor: 'var(--dp-bg-base)', border: '1px solid var(--dp-border)' }}
         >
-          {target && <Sprite src={target.sprite} name={target.name} shadow={!solved} className="max-w-[64px] max-h-[64px]" />}
+          {target && (
+            <Sprite
+              src={target.sprite}
+              name={target.name}
+              digimonId={target.id}
+              shadow={!solved}
+              className="max-w-[64px] max-h-[64px]"
+            />
+          )}
         </div>
         <p className="text-sm" style={{ color: 'var(--dp-text-secondary)' }}>
           A hidden catchable Digimon is chosen. Guess any Digimon to get clues; name the exact one to catch it.

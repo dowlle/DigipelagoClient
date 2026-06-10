@@ -207,4 +207,5 @@ def test_me_returns_profile_when_logged_in(client, monkeypatch):
         "discord_id": "42",
         "username": "stef",
         "avatar": "av",
+        "is_owner": False,
     }

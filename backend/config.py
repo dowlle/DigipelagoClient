@@ -52,6 +52,11 @@ class Config:
     # --- Credential encryption (Fernet key, urlsafe base64, 32 bytes) ---
     DIGIPELAGO_CRED_KEY = os.environ.get("DIGIPELAGO_CRED_KEY", "")
 
+    # --- Owner (sprite-recipe review) ---
+    # Discord id whose login may review/approve sprite-recipe submissions.
+    # Empty (the default) means nobody is owner.
+    OWNER_DISCORD_ID = os.environ.get("OWNER_DISCORD_ID", "")
+
     # --- Static frontend ---
     # Path (relative to this file's parent, or absolute) to the built Vite dist/.
     FRONTEND_DIST = os.environ.get("FRONTEND_DIST", "../dist")

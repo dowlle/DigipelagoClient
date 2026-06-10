@@ -11,6 +11,7 @@ import { useSprite } from './useSprite';
 export function Sprite({
   src,
   name,
+  digimonId,
   shadow = false,
   className = '',
   fill,
@@ -18,6 +19,8 @@ export function Sprite({
 }: {
   src: string | null;
   name: string;
+  /** Enables the per-sprite cutout recipe layer (served + local drafts). */
+  digimonId?: number;
   shadow?: boolean;
   className?: string;
   /** Silhouette fill (CSS color / gradient). Defaults to the primary token. */
@@ -25,7 +28,7 @@ export function Sprite({
   /** Drop-shadow glow color for silhouettes. */
   glow?: string;
 }) {
-  const { state, url, isCutout } = useSprite(src);
+  const { state, url, isCutout } = useSprite(src, digimonId);
 
   // No image yet (no src, awaiting consent, loading, or failed): text placeholder.
   if (state !== 'ready' || !url) {

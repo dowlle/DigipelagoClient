@@ -196,6 +196,32 @@ _SCHEMA_STATEMENTS = (
     "ALTER TABLE pair_stats ADD COLUMN IF NOT EXISTS n_shown int",
     "ALTER TABLE pair_stats ADD COLUMN IF NOT EXISTS n_wrong int",
     "ALTER TABLE pair_stats ADD COLUMN IF NOT EXISTS confus real",
+    # sprite_recipes (APPROVED / live cutout recipes; params only, never pixels)
+    """
+    CREATE TABLE IF NOT EXISTS sprite_recipes (
+        dataset_version text,
+        target_id       int,
+        recipe          jsonb NOT NULL,
+        updated_at      timestamptz DEFAULT now(),
+        PRIMARY KEY (dataset_version, target_id)
+    )
+    """,
+    "ALTER TABLE sprite_recipes ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()",
+    # sprite_recipe_submissions (PROPOSED by users; append-only, anonymous who)
+    """
+    CREATE TABLE IF NOT EXISTS sprite_recipe_submissions (
+        id              bigserial PRIMARY KEY,
+        ts              timestamptz DEFAULT now(),
+        who             text,
+        dataset_version text NOT NULL,
+        target_id       int NOT NULL,
+        recipe          jsonb NOT NULL,
+        note            text,
+        status          text DEFAULT 'pending'
+    )
+    """,
+    "ALTER TABLE sprite_recipe_submissions ADD COLUMN IF NOT EXISTS note text",
+    "ALTER TABLE sprite_recipe_submissions ADD COLUMN IF NOT EXISTS status text DEFAULT 'pending'",
 )
 
 

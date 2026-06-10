@@ -10,6 +10,8 @@ import { Avatar } from './Avatar';
 export interface CatchMoment {
   name: string;
   sprite: string | null;
+  /** Dataset id of the caught Digimon (enables the cutout-recipe layer). */
+  id?: number;
   /** The AP item this catch shipped, when known from the feed. */
   item?: string;
   /** The recipient world, when known from the feed. */
@@ -31,7 +33,7 @@ export function CatchToast({ moment }: { moment: CatchMoment }) {
           className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-[10px]"
           style={{ background: '#eef1f5' }}
         >
-          <Sprite src={moment.sprite} name={moment.name} className="h-10 w-10" />
+          <Sprite src={moment.sprite} name={moment.name} digimonId={moment.id} className="h-10 w-10" />
         </div>
         <div>
           <div className="text-sm font-bold" style={{ color: 'var(--dp-good)', fontFamily: 'var(--dp-font-disp)' }}>

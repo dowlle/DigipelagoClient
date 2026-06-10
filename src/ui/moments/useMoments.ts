@@ -64,7 +64,7 @@ export function useMoments(state: GameState, feed: FeedRow[]): MomentsResult {
       if (mon) {
         // Pair with the most recent "catch → shipped" row, if one is present.
         const ship = feedRef.current.find((r) => r.kind === 'catch');
-        setCatchMoment({ name: mon.name, sprite: mon.sprite, item: ship?.item, player: ship?.player });
+        setCatchMoment({ name: mon.name, sprite: mon.sprite, id: mon.id, item: ship?.item, player: ship?.player });
       }
     }
     prevCaught.current = new Set(state.caught);

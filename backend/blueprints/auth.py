@@ -21,7 +21,7 @@ is hardcoded here.
 import secrets
 
 import requests
-from flask import Blueprint, jsonify, redirect, request, session
+from flask import Blueprint, current_app, jsonify, redirect, request, session
 
 from ..config import Config
 from ..auth_utils import current_user
@@ -167,12 +167,16 @@ def me():
     user = current_user()
     if user is None:
         return jsonify(None), 200
+    owner_id = current_app.config.get("OWNER_DISCORD_ID", "")
     return (
         jsonify(
             {
                 "discord_id": user["discord_id"],
                 "username": user["username"],
                 "avatar": user["avatar"],
+                # Gates the in-app sprite-recipe review surface only; every
+                # privileged route re-checks server-side.
+                "is_owner": bool(owner_id) and str(user["discord_id"]) == str(owner_id),
             }
         ),
         200,

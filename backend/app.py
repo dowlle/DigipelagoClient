@@ -23,6 +23,7 @@ from .blueprints.auth import bp as auth_bp
 from .blueprints.themes import bp as themes_bp
 from .blueprints.connections import bp as connections_bp
 from .blueprints.telemetry import bp as telemetry_bp
+from .blueprints.sprites import bp as sprites_bp
 
 log = logging.getLogger("digipelago")
 
@@ -61,6 +62,7 @@ def create_app() -> Flask:
     app.register_blueprint(themes_bp, url_prefix="/api")
     app.register_blueprint(connections_bp, url_prefix="/api")
     app.register_blueprint(telemetry_bp, url_prefix="/api")
+    app.register_blueprint(sprites_bp, url_prefix="/api")
 
     # --- CLI: difficulty aggregation (out-of-band, e.g. host cron) ----------
     @app.cli.command("aggregate-difficulty")

@@ -14,6 +14,7 @@ import { Sprite } from './Sprite';
 export function SpriteReveal({
   src,
   name,
+  digimonId,
   revealed,
   fill = 'var(--dp-primary)',
   glow = 'var(--dp-silhouette-glow)',
@@ -21,18 +22,20 @@ export function SpriteReveal({
 }: {
   src: string | null;
   name: string;
+  /** Enables the per-sprite cutout recipe layer (served + local drafts). */
+  digimonId?: number;
   revealed: boolean;
   /** Silhouette fill (CSS color / gradient). */
   fill?: string;
   glow?: string;
   className?: string;
 }) {
-  const { state, url, isCutout } = useSprite(src);
+  const { state, url, isCutout } = useSprite(src, digimonId);
 
   // No ready cutout to mask/stack (awaiting consent, loading, or boxed-fallback)
   // -> defer to Sprite, which renders the placeholder / boxed image + shadow swap.
   if (state !== 'ready' || !url || !isCutout) {
-    return <Sprite src={src} name={name} shadow={!revealed} className={className} />;
+    return <Sprite src={src} name={name} digimonId={digimonId} shadow={!revealed} className={className} />;
   }
 
   const maskBase: CSSProperties = {

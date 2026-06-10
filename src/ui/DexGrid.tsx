@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useLayoutEffect } from 'react';
+import { lazy, memo, Suspense, useMemo, useState, useLayoutEffect } from 'react';
 import { dataset, getDigimon, priorsOf } from '../data/dataset';
 import { useGame } from '../game/context';
 import { entryStatus, lockReason } from '../game/status';
@@ -7,6 +7,10 @@ import { attrColor } from './attrColor';
 import { Sprite } from './Sprite';
 import { SpriteConsentBanner } from './SpriteConsentPrompt';
 import { useInViewport } from './useInViewport';
+
+// Sprite Studio (cutout tuner modal) is lazy: it only loads when a cell is
+// clicked, keeping it out of the main bundle.
+const SpriteStudio = lazy(() => import('./SpriteStudio'));
 
 const CELL = 92; // column width (px)
 const ROW_H = 112; // row height incl. gap (px) — used to reserve off-screen height
@@ -45,7 +49,7 @@ function classify(d: Digimon, state: GameState, slotData: SlotData): DexEntry {
   return { d, cue: 'lockKey' };
 }
 
-const Cell = memo(function Cell({ entry }: { entry: DexEntry }) {
+const Cell = memo(function Cell({ entry, onOpen }: { entry: DexEntry; onOpen: (e: DexEntry) => void }) {
   const { d, cue } = entry;
   const ac = attrColor(d.attribute);
   const caught = cue === 'caught';
@@ -72,7 +76,13 @@ const Cell = memo(function Cell({ entry }: { entry: DexEntry }) {
 
   return (
     <div
-      className="relative flex flex-col items-center justify-between p-1.5 border transition-transform"
+      className="relative flex flex-col items-center justify-between p-1.5 border transition-transform cursor-pointer"
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(entry)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') onOpen(entry);
+      }}
       style={{
         width: CELL,
         height: ROW_H - 8,
@@ -100,6 +110,7 @@ const Cell = memo(function Cell({ entry }: { entry: DexEntry }) {
         <Sprite
           src={d.sprite}
           name={d.name}
+          digimonId={d.id}
           shadow={!caught}
           fill={caught ? undefined : silFill}
           glow={guess ? ac : 'var(--dp-silhouette-glow)'}
@@ -177,7 +188,15 @@ const Cell = memo(function Cell({ entry }: { entry: DexEntry }) {
   );
 });
 
-function LevelGroup({ level, items }: { level: string; items: DexEntry[] }) {
+function LevelGroup({
+  level,
+  items,
+  onOpen,
+}: {
+  level: string;
+  items: DexEntry[];
+  onOpen: (e: DexEntry) => void;
+}) {
   const { ref, inView } = useInViewport<HTMLDivElement>();
   const [cols, setCols] = useState(8);
 
@@ -203,7 +222,7 @@ function LevelGroup({ level, items }: { level: string; items: DexEntry[] }) {
       {inView ? (
         <div className="grid gap-2 justify-start" style={{ gridTemplateColumns: `repeat(auto-fill, ${CELL}px)` }}>
           {items.map((entry) => (
-            <Cell key={entry.d.id} entry={entry} />
+            <Cell key={entry.d.id} entry={entry} onOpen={onOpen} />
           ))}
         </div>
       ) : (
@@ -337,6 +356,8 @@ export function DexGrid() {
     [],
   );
   const [filter, setFilter] = useState<Filter>('active');
+  // Sprite Studio modal target (click any cell to tune/report its cutout).
+  const [studio, setStudio] = useState<DexEntry | null>(null);
 
   if (!slotData) return null;
 
@@ -371,13 +392,18 @@ export function DexGrid() {
       <div className="flex flex-col lg:flex-row gap-5 items-start">
         <div className="flex flex-col gap-5 flex-1 min-w-0">
           {LEVEL_ORDER.map((lvl) => (
-            <LevelGroup key={lvl} level={lvl} items={byLevel(lvl)} />
+            <LevelGroup key={lvl} level={lvl} items={byLevel(lvl)} onOpen={setStudio} />
           ))}
         </div>
         <div className="w-full lg:w-64 shrink-0 lg:sticky lg:top-4">
           <DexLegend />
         </div>
       </div>
+      {studio && (
+        <Suspense fallback={null}>
+          <SpriteStudio d={studio.d} caught={studio.cue === 'caught'} onClose={() => setStudio(null)} />
+        </Suspense>
+      )}
     </div>
   );
 }

@@ -309,6 +309,7 @@ export function MultipleChoice({
                 <SpriteReveal
                   src={target.sprite}
                   name={target.name}
+                  digimonId={target.id}
                   revealed={revealed}
                   fill="linear-gradient(180deg, var(--dp-primary), var(--dp-card-3))"
                   className="h-full w-full"

@@ -21,6 +21,34 @@ const FEATHER_SAT = 22;
 const FEATHER_ALPHA = 0.35;
 const MIN_KEPT = 0.12; // below this the flood-fill ate the creature -> boxed fallback
 
+/**
+ * Per-sprite cutout recipe (Sprite Cutout Manager). cutout = flood-fill from a
+ * SEED SET within a TOLERANCE; everything else is a variation:
+ *   - enclosed white pocket  -> extra interior `seeds` (point-cascade)
+ *   - fill leaks into body   -> `borderSeeds: false` and/or lower tolerance
+ *   - halos / off-white bg   -> higher tolerance + `feather`
+ *   - hopeless               -> mode 'boxed' (framed original) or 'raw' (the
+ *                               original already has transparency; use as-is)
+ * IP rule: recipes are params only, never pixels/masks; the cutout is always
+ * recomputed on-device. Served recipes are keyed (dataset_version, target_id).
+ */
+export interface SpriteRecipe {
+  mode?: 'cutout' | 'boxed' | 'raw';
+  tolerance?: number; // white-distance threshold override (default 228)
+  borderSeeds?: boolean; // default true (today's border flood)
+  seeds?: { x: number; y: number }[]; // EXTRA origins, normalized 0..1
+  feather?: number; // edge alpha-feather passes (default 1, 0 = off)
+}
+
+/** Stable short hash of a recipe for cache keys ('' = engine default). */
+export function recipeHash(recipe?: SpriteRecipe | null): string {
+  if (!recipe || Object.keys(recipe).length === 0) return '';
+  const canonical = JSON.stringify(recipe, Object.keys(recipe as Record<string, unknown>).sort());
+  let h = 5381;
+  for (let i = 0; i < canonical.length; i++) h = ((h << 5) + h + canonical.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
 // Versioned so a dataset change can't serve stale cutouts.
 const CACHE_NAME = `digipelago-sprites-v${DATASET_VERSION}`;
 
@@ -38,31 +66,50 @@ export function isKnownFallback(sprite: string | null): boolean {
 }
 
 /**
- * Border flood-fill cutout, in place on an RGBA buffer. Returns the kept-opaque
- * ratio, or -1 when the source isn't a white-box sprite (so the caller boxes it).
+ * Flood-fill cutout from a seed set, in place on an RGBA buffer. Returns the
+ * kept-opaque ratio, or -1 when the default heuristic decides the source isn't
+ * a white-box sprite (so the caller boxes it). An explicit recipe skips that
+ * heuristic and is applied verbatim (recipe beats heuristic, by design).
  */
-function carve(data: Uint8ClampedArray, w: number, h: number): number {
+export function carve(data: Uint8ClampedArray, w: number, h: number, recipe?: SpriteRecipe | null): number {
+  const tolerance = recipe?.tolerance ?? WHITE;
+  const borderSeeds = recipe?.borderSeeds ?? true;
+  const extraSeeds = recipe?.seeds ?? [];
+  const featherPasses = recipe?.feather ?? 1;
+  const explicit = !!recipe && Object.keys(recipe).length > 0;
+
   const whiteCorner = (x: number, y: number) => {
     const p = (y * w + x) * 4;
-    return data[p + 3] > 250 && data[p] > WHITE && data[p + 1] > WHITE && data[p + 2] > WHITE;
+    return data[p + 3] > 250 && data[p] > tolerance && data[p + 1] > tolerance && data[p + 2] > tolerance;
   };
-  const whiteCorners =
-    Number(whiteCorner(0, 0)) + Number(whiteCorner(w - 1, 0)) +
-    Number(whiteCorner(0, h - 1)) + Number(whiteCorner(w - 1, h - 1));
-  if (whiteCorners < 3) return -1;
+  if (!explicit) {
+    const whiteCorners =
+      Number(whiteCorner(0, 0)) + Number(whiteCorner(w - 1, 0)) +
+      Number(whiteCorner(0, h - 1)) + Number(whiteCorner(w - 1, h - 1));
+    if (whiteCorners < 3) return -1;
+  }
 
   const N = w * h;
   const isWhitish = (i: number) => {
     const p = i * 4;
-    return data[p] > WHITE && data[p + 1] > WHITE && data[p + 2] > WHITE;
+    return data[p] > tolerance && data[p + 1] > tolerance && data[p + 2] > tolerance;
   };
   let opaqueBefore = 0;
   for (let i = 0; i < N; i++) if (data[i * 4 + 3] > 8) opaqueBefore++;
 
   const visited = new Uint8Array(N);
   const stack: number[] = [];
-  for (let x = 0; x < w; x++) { stack.push(x); stack.push((h - 1) * w + x); }
-  for (let y = 0; y < h; y++) { stack.push(y * w); stack.push(y * w + w - 1); }
+  if (borderSeeds) {
+    for (let x = 0; x < w; x++) { stack.push(x); stack.push((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { stack.push(y * w); stack.push(y * w + w - 1); }
+  }
+  // Interior seed points (point-cascade): each floods its own connected
+  // near-white region, reaching pockets a border fill never can.
+  for (const s of extraSeeds) {
+    const sx = Math.min(w - 1, Math.max(0, Math.round(s.x * (w - 1))));
+    const sy = Math.min(h - 1, Math.max(0, Math.round(s.y * (h - 1))));
+    stack.push(sy * w + sx);
+  }
   while (stack.length) {
     const i = stack.pop() as number;
     if (i < 0 || i >= N || visited[i]) continue;
@@ -76,24 +123,42 @@ function carve(data: Uint8ClampedArray, w: number, h: number): number {
     if (y < h - 1) stack.push(i + w);
   }
 
-  for (let i = 0; i < N; i++) {
-    if (data[i * 4 + 3] === 0) continue;
-    const x = i % w, y = (i - x) / w, p = i * 4;
-    const mn = Math.min(data[p], data[p + 1], data[p + 2]);
-    const mx = Math.max(data[p], data[p + 1], data[p + 2]);
-    if (mn > FEATHER_MIN && mx - mn < FEATHER_SAT) {
-      let edge = false;
-      if (x > 0 && data[(i - 1) * 4 + 3] === 0) edge = true;
-      else if (x < w - 1 && data[(i + 1) * 4 + 3] === 0) edge = true;
-      else if (y > 0 && data[(i - w) * 4 + 3] === 0) edge = true;
-      else if (y < h - 1 && data[(i + w) * 4 + 3] === 0) edge = true;
-      if (edge) data[p + 3] = Math.round(data[p + 3] * FEATHER_ALPHA);
+  for (let pass = 0; pass < featherPasses; pass++) {
+    for (let i = 0; i < N; i++) {
+      if (data[i * 4 + 3] === 0) continue;
+      const x = i % w, y = (i - x) / w, p = i * 4;
+      const mn = Math.min(data[p], data[p + 1], data[p + 2]);
+      const mx = Math.max(data[p], data[p + 1], data[p + 2]);
+      if (mn > FEATHER_MIN && mx - mn < FEATHER_SAT) {
+        let edge = false;
+        if (x > 0 && data[(i - 1) * 4 + 3] === 0) edge = true;
+        else if (x < w - 1 && data[(i + 1) * 4 + 3] === 0) edge = true;
+        else if (y > 0 && data[(i - w) * 4 + 3] === 0) edge = true;
+        else if (y < h - 1 && data[(i + w) * 4 + 3] === 0) edge = true;
+        if (edge) data[p + 3] = Math.round(data[p + 3] * FEATHER_ALPHA);
+      }
     }
   }
 
   let opaqueAfter = 0;
   for (let i = 0; i < N; i++) if (data[i * 4 + 3] > 8) opaqueAfter++;
   return opaqueBefore ? opaqueAfter / opaqueBefore : 0;
+}
+
+/** Auto-fallback safety net: true when an UN-tuned cutout looks mangled (the
+ *  fill ate the creature, or the image centre went fully transparent) so the
+ *  boxed original renders instead. Never applied over an explicit recipe. */
+function looksMangled(data: Uint8ClampedArray, w: number, h: number, kept: number): boolean {
+  if (kept < MIN_KEPT) return true;
+  const cx = Math.floor(w / 2), cy = Math.floor(h / 2);
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const x = cx + dx, y = cy + dy;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      if (data[(y * w + x) * 4 + 3] > 8) return false; // centre still has body
+    }
+  }
+  return true;
 }
 
 // --- polite fetching ---------------------------------------------------------
@@ -140,10 +205,45 @@ async function fetchSpriteBlob(srcUrl: string): Promise<Blob> {
   throw lastError;
 }
 
-/** Produce the render blob from the fetched original: cutout when possible. */
-async function buildBlob(srcUrl: string, allowCutout: boolean): Promise<{ blob: Blob; isCutout: boolean }> {
-  const raw = await withFetchSlot(() => fetchSpriteBlob(srcUrl));
-  if (!allowCutout || typeof createImageBitmap === 'undefined') return { blob: raw, isCutout: false };
+/** Get the ORIGINAL sprite bytes: device cache first, network once. Cached
+ *  separately from processed outputs so re-tuning a recipe (new cache key)
+ *  never re-hits Digi-API. */
+async function getRawBlob(srcUrl: string, base: string, cache: Cache | null): Promise<Blob> {
+  const rawKey = `https://digipelago.sprite-cache/${encodeURIComponent(base)}?raw`;
+  if (cache) {
+    try {
+      const hit = await cache.match(rawKey);
+      if (hit) return await hit.blob();
+    } catch {
+      /* fall through to network */
+    }
+  }
+  const blob = await withFetchSlot(() => fetchSpriteBlob(srcUrl));
+  if (cache) {
+    try {
+      await cache.put(rawKey, new Response(blob, { headers: { 'content-type': 'image/png' } }));
+    } catch {
+      /* cache write is best-effort */
+    }
+  }
+  return blob;
+}
+
+/** Produce the render blob from the original: cutout when possible. */
+async function buildBlob(
+  raw: Blob,
+  allowCutout: boolean,
+  recipe?: SpriteRecipe | null,
+): Promise<{ blob: Blob; isCutout: boolean }> {
+  const mode = recipe?.mode ?? 'cutout';
+  if (mode === 'boxed') return { blob: raw, isCutout: false };
+  if (mode === 'raw') return { blob: raw, isCutout: true }; // source already transparent
+  const explicit = !!recipe && Object.keys(recipe).length > 0;
+  // The manifest's known-fallback list is only the DEFAULT; an explicit cutout
+  // recipe overrides it (that is the whole point of tuning).
+  if ((!allowCutout && !explicit) || typeof createImageBitmap === 'undefined') {
+    return { blob: raw, isCutout: false };
+  }
   try {
     const bmp = await createImageBitmap(raw);
     const cv = document.createElement('canvas');
@@ -154,8 +254,11 @@ async function buildBlob(srcUrl: string, allowCutout: boolean): Promise<{ blob: 
     ctx.drawImage(bmp, 0, 0);
     bmp.close?.();
     const img = ctx.getImageData(0, 0, cv.width, cv.height);
-    const kept = carve(img.data, cv.width, cv.height);
-    if (kept < MIN_KEPT) return { blob: raw, isCutout: false }; // -1 or too-light -> boxed
+    const kept = carve(img.data, cv.width, cv.height, recipe);
+    if (kept < 0) return { blob: raw, isCutout: false }; // not a white-box sprite
+    if (!explicit && looksMangled(img.data, cv.width, cv.height, kept)) {
+      return { blob: raw, isCutout: false }; // heuristic safety net (untuned only)
+    }
     ctx.putImageData(img, 0, 0);
     const out = await new Promise<Blob | null>((resolve) => cv.toBlob(resolve, 'image/png'));
     return out ? { blob: out, isCutout: true } : { blob: raw, isCutout: false };
@@ -169,9 +272,16 @@ const resolved = new Map<string, { url: string; isCutout: boolean }>();
 // In-flight dedupe: many dex cells can share a sprite; one fetch serves all.
 const inflight = new Map<string, Promise<{ url: string; isCutout: boolean }>>();
 
-async function resolveSprite(srcUrl: string, base: string): Promise<{ url: string; isCutout: boolean }> {
+async function resolveSprite(
+  srcUrl: string,
+  base: string,
+  recipe: SpriteRecipe | null,
+  rHash: string,
+): Promise<{ url: string; isCutout: boolean }> {
   const allowCutout = !isKnownFallback(srcUrl);
-  const cacheKey = `https://digipelago.sprite-cache/${encodeURIComponent(base)}`;
+  // The recipe hash is part of the cache key, so a re-tuned sprite recomputes
+  // on the device while everything else stays cached.
+  const cacheKey = `https://digipelago.sprite-cache/${encodeURIComponent(base)}${rHash ? `?r=${rHash}` : ''}`;
 
   // Device cache read (errors here must not trigger a second network fetch).
   let cache: Cache | null = null;
@@ -188,7 +298,8 @@ async function resolveSprite(srcUrl: string, base: string): Promise<{ url: strin
     }
   }
 
-  const { blob, isCutout } = await buildBlob(srcUrl, allowCutout);
+  const raw = await getRawBlob(srcUrl, base, cache);
+  const { blob, isCutout } = await buildBlob(raw, allowCutout, recipe);
   if (cache) {
     try {
       await cache.put(
@@ -203,24 +314,66 @@ async function resolveSprite(srcUrl: string, base: string): Promise<{ url: strin
 }
 
 /**
- * Resolve a sprite URL to an on-device, ready-to-render object URL (transparent
- * cutout when possible, else boxed). Caller MUST have consent. Hits Digi-API at
- * most once per sprite per device (Cache API persists across reloads); fetches
- * are capped/queued and retried, and concurrent callers share one resolution.
+ * Resolve a sprite URL (+ optional cutout recipe) to an on-device,
+ * ready-to-render object URL (transparent cutout when possible, else boxed).
+ * Caller MUST have consent. Hits Digi-API at most once per sprite per device
+ * (Cache API persists across reloads); fetches are capped/queued and retried,
+ * and concurrent callers share one resolution per (sprite, recipe).
  */
-export function loadSprite(srcUrl: string): Promise<{ url: string; isCutout: boolean }> {
+export function loadSprite(
+  srcUrl: string,
+  recipe?: SpriteRecipe | null,
+): Promise<{ url: string; isCutout: boolean }> {
   const base = spriteBasename(srcUrl) ?? srcUrl;
-  const memo = resolved.get(base);
+  const rHash = recipeHash(recipe);
+  const key = rHash ? `${base}|${rHash}` : base;
+  const memo = resolved.get(key);
   if (memo) return Promise.resolve(memo);
-  const pending = inflight.get(base);
+  const pending = inflight.get(key);
   if (pending) return pending;
 
-  const p = resolveSprite(srcUrl, base)
+  const p = resolveSprite(srcUrl, base, recipe ?? null, rHash)
     .then((out) => {
-      resolved.set(base, out);
+      resolved.set(key, out);
       return out;
     })
-    .finally(() => inflight.delete(base));
-  inflight.set(base, p);
+    .finally(() => inflight.delete(key));
+  inflight.set(key, p);
   return p;
+}
+
+/** Tuner live preview: run the engine on the (raw-cached) original with an
+ *  arbitrary recipe, WITHOUT memoizing or writing processed cache entries, so
+ *  slider scrubbing neither pollutes the device cache nor re-hits Digi-API.
+ *  The caller owns the returned object URL (revoke it when replaced). */
+export async function previewSprite(
+  srcUrl: string,
+  recipe: SpriteRecipe | null,
+): Promise<{ url: string; isCutout: boolean }> {
+  const base = spriteBasename(srcUrl) ?? srcUrl;
+  let cache: Cache | null = null;
+  if (typeof caches !== 'undefined') {
+    try {
+      cache = await caches.open(CACHE_NAME);
+    } catch {
+      cache = null;
+    }
+  }
+  const raw = await getRawBlob(srcUrl, base, cache);
+  const { blob, isCutout } = await buildBlob(raw, !isKnownFallback(srcUrl), recipe);
+  return { url: URL.createObjectURL(blob), isCutout };
+}
+
+/** The untouched original (boxed) for the tuner's seeding surface. */
+export async function loadRawSprite(srcUrl: string): Promise<string> {
+  const base = spriteBasename(srcUrl) ?? srcUrl;
+  let cache: Cache | null = null;
+  if (typeof caches !== 'undefined') {
+    try {
+      cache = await caches.open(CACHE_NAME);
+    } catch {
+      cache = null;
+    }
+  }
+  return URL.createObjectURL(await getRawBlob(srcUrl, base, cache));
 }

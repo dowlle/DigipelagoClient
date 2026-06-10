@@ -42,6 +42,8 @@ export interface Me {
   discord_id: string;
   username: string | null;
   avatar: string | null;
+  /** True for the configured owner account (gates the sprite-recipe review UI). */
+  is_owner?: boolean;
 }
 
 /** GET /api/me. Returns the profile, or null when logged out. Never throws on
