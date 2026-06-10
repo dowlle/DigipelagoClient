@@ -52,6 +52,7 @@ function normalize(r: SpriteRecipe): SpriteRecipe {
   if (r.borderSeeds === false) out.borderSeeds = false;
   if (r.feather !== undefined && r.feather !== 1) out.feather = r.feather;
   if (r.seeds && r.seeds.length > 0) out.seeds = r.seeds;
+  if (r.keyColor) out.keyColor = r.keyColor.toLowerCase();
   return out;
 }
 
@@ -135,18 +136,29 @@ function PreviewPair({ src, recipe }: { src: string; recipe: SpriteRecipe }) {
   );
 }
 
-/** The original sprite as a seeding surface: click to add a flood-fill origin,
- *  click a dot to remove it. Coordinates are normalized 0..1 over the image. */
+/** The original sprite as a seeding surface: click to add a flood-fill origin
+ *  (or, in pick mode, sample the background colour), click a dot to remove it.
+ *  Coordinates are normalized 0..1 over the IMAGE (not the letterboxed box),
+ *  matching how the engine maps seeds onto pixels - important for non-square
+ *  sources like anime screenshots. */
 function SeedSurface({
   src,
   seeds,
   onChange,
+  pickMode,
+  onPickColor,
 }: {
   src: string;
   seeds: { x: number; y: number }[];
   onChange: (seeds: { x: number; y: number }[]) => void;
+  pickMode: boolean;
+  onPickColor: (hex: string) => void;
 }) {
   const [rawUrl, setRawUrl] = useState<string | null>(null);
+  const [dims, setDims] = useState<{ nw: number; nh: number } | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   useEffect(() => {
     let alive = true;
     let url: string | null = null;
@@ -160,16 +172,62 @@ function SeedSurface({
     return () => {
       alive = false;
       if (url) URL.revokeObjectURL(url);
+      sampleCanvasRef.current = null;
     };
   }, [src]);
 
-  const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  // object-contain box of the image inside the square container, as fractions.
+  const box = (() => {
+    if (!dims || dims.nw <= 0 || dims.nh <= 0) return { ox: 0, oy: 0, dw: 1, dh: 1 };
+    const dw = dims.nw >= dims.nh ? 1 : dims.nw / dims.nh;
+    const dh = dims.nh >= dims.nw ? 1 : dims.nh / dims.nw;
+    return { ox: (1 - dw) / 2, oy: (1 - dh) / 2, dw, dh };
+  })();
+
+  /** Click position -> normalized image coords, or null when outside the image. */
+  const toImageCoords = (e: React.MouseEvent<HTMLDivElement>): { x: number; y: number } | null => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    if (x < 0 || x > 1 || y < 0 || y > 1) return;
+    const cx = (e.clientX - rect.left) / rect.width;
+    const cy = (e.clientY - rect.top) / rect.height;
+    const x = (cx - box.ox) / box.dw;
+    const y = (cy - box.oy) / box.dh;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+    return { x: Math.round(x * 1e4) / 1e4, y: Math.round(y * 1e4) / 1e4 };
+  };
+
+  /** Sample the pixel colour at normalized image coords from the original. */
+  const sampleAt = (x: number, y: number): string | null => {
+    const img = imgRef.current;
+    if (!img || !img.naturalWidth) return null;
+    let cv = sampleCanvasRef.current;
+    if (!cv) {
+      cv = document.createElement('canvas');
+      cv.width = img.naturalWidth;
+      cv.height = img.naturalHeight;
+      const ctx = cv.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0);
+      sampleCanvasRef.current = cv;
+    }
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    const px = Math.min(cv.width - 1, Math.max(0, Math.round(x * (cv.width - 1))));
+    const py = Math.min(cv.height - 1, Math.max(0, Math.round(y * (cv.height - 1))));
+    const d = ctx.getImageData(px, py, 1, 1).data;
+    const hex = (v: number) => v.toString(16).padStart(2, '0');
+    return `#${hex(d[0])}${hex(d[1])}${hex(d[2])}`;
+  };
+
+  const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const pos = toImageCoords(e);
+    if (!pos) return;
+    if (pickMode) {
+      const c = sampleAt(pos.x, pos.y);
+      if (c) onPickColor(c);
+      return;
+    }
     if (seeds.length >= MAX_SEEDS) return;
-    onChange([...seeds, { x: Math.round(x * 1e4) / 1e4, y: Math.round(y * 1e4) / 1e4 }]);
+    onChange([...seeds, pos]);
   };
 
   if (!rawUrl) {
@@ -182,19 +240,31 @@ function SeedSurface({
   return (
     <div
       className="relative h-44 w-44 cursor-crosshair select-none rounded-lg"
-      style={{ background: '#fff', border: '1px solid var(--dp-line)' }}
+      style={{ background: '#fff', border: pickMode ? '2px solid var(--dp-primary)' : '1px solid var(--dp-line)' }}
       onClick={onClick}
-      title="Click a trapped white area to add a flood-fill seed"
+      title={
+        pickMode
+          ? 'Click the background colour to key out'
+          : 'Click a trapped background area to add a flood-fill seed'
+      }
     >
-      <img src={rawUrl} alt="Original sprite" className="h-full w-full object-contain" draggable={false} />
+      <img
+        ref={imgRef}
+        src={rawUrl}
+        alt="Original sprite"
+        className="h-full w-full object-contain"
+        draggable={false}
+        crossOrigin="anonymous"
+        onLoad={(e) => setDims({ nw: e.currentTarget.naturalWidth, nh: e.currentTarget.naturalHeight })}
+      />
       {seeds.map((s, i) => (
         <button
           key={`${s.x}-${s.y}-${i}`}
           type="button"
           className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full"
           style={{
-            left: `${s.x * 100}%`,
-            top: `${s.y * 100}%`,
+            left: `${(box.ox + s.x * box.dw) * 100}%`,
+            top: `${(box.oy + s.y * box.dh) * 100}%`,
             background: 'var(--dp-warn)',
             border: '1.5px solid #000',
             boxShadow: '0 0 4px rgba(0,0,0,.6)',
@@ -264,6 +334,8 @@ export function SpriteStudio({ d, caught, onClose }: { d: Digimon; caught: boole
   const [busy, setBusy] = useState(false);
   const [reported, setReported] = useState(false);
   const [subs, setSubs] = useState<RecipeSubmission[] | null>(null);
+  // Eyedropper: the next click on the original samples the key colour.
+  const [pickMode, setPickMode] = useState(false);
 
   const update = useCallback(
     (patch: Partial<SpriteRecipe>) => {
@@ -366,13 +438,24 @@ export function SpriteStudio({ d, caught, onClose }: { d: Digimon; caught: boole
         ) : (
           <>
             <div className="mb-4 flex flex-wrap items-start gap-4">
-              <SeedSurface src={d.sprite ?? ''} seeds={seeds} onChange={(s) => update({ seeds: s })} />
+              <SeedSurface
+                src={d.sprite ?? ''}
+                seeds={seeds}
+                onChange={(s) => update({ seeds: s })}
+                pickMode={pickMode}
+                onPickColor={(hex) => {
+                  setPickMode(false);
+                  update({ keyColor: hex === '#ffffff' ? undefined : hex });
+                }}
+              />
               <PreviewPair src={d.sprite ?? ''} recipe={recipe} />
             </div>
             <p className="mb-3 text-xs" style={{ color: 'var(--dp-text-faint)' }}>
-              Click the original (left) to drop a flood-fill seed into a trapped white pocket;
-              click a dot to remove it. The previews run the exact engine the game uses. Edits
-              save as a local draft and apply on this device immediately.
+              Click the original (left) to drop a flood-fill seed into a trapped background
+              pocket; click a dot to remove it. Each seed removes the colour UNDER it, so
+              dark floors and skies come out one click each. The previews run the exact
+              engine the game uses. Edits save as a local draft and apply on this device
+              immediately.
             </p>
 
             <div className="flex flex-col gap-2.5">
@@ -400,6 +483,32 @@ export function SpriteStudio({ d, caught, onClose }: { d: Digimon; caught: boole
               </Row>
               {mode === 'cutout' && (
                 <>
+                  <Row label="Key colour">
+                    <span
+                      className="h-5 w-5 shrink-0 rounded"
+                      style={{
+                        background: recipe.keyColor ?? '#ffffff',
+                        border: '1px solid var(--dp-line)',
+                      }}
+                      title={recipe.keyColor ?? 'auto (white / detected corners)'}
+                    />
+                    <button
+                      type="button"
+                      className="dp-toggle-btn text-xs"
+                      data-active={pickMode}
+                      onClick={() => setPickMode((v) => !v)}
+                    >
+                      {pickMode ? 'Click the image...' : 'Pick from image'}
+                    </button>
+                    {recipe.keyColor && (
+                      <button type="button" className="dp-toggle-btn text-xs" onClick={() => update({ keyColor: undefined })}>
+                        Auto
+                      </button>
+                    )}
+                    <span className="flex-1 text-xs" style={{ color: 'var(--dp-text-faint)' }}>
+                      the background colour the border flood removes
+                    </span>
+                  </Row>
                   <Row label={`Tolerance ${recipe.tolerance ?? TOL_DEFAULT}`}>
                     <input
                       type="range"

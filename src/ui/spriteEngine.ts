@@ -34,10 +34,19 @@ const MIN_KEPT = 0.12; // below this the flood-fill ate the creature -> boxed fa
  */
 export interface SpriteRecipe {
   mode?: 'cutout' | 'boxed' | 'raw';
-  tolerance?: number; // white-distance threshold override (default 228)
+  tolerance?: number; // key-distance threshold override (default 228; higher = stricter)
   borderSeeds?: boolean; // default true (today's border flood)
   seeds?: { x: number; y: number }[]; // EXTRA origins, normalized 0..1
   feather?: number; // edge alpha-feather passes (default 1, 0 = off)
+  /**
+   * Chroma key: the background colour ('#rrggbb') the border flood removes.
+   * Default white. Interior seeds always flood the colour SAMPLED UNDER the
+   * seed point, so mixed backgrounds (dark floor + black void, sky + clouds)
+   * are removed one click each. Tolerance maps to a per-channel distance
+   * budget of (255 - tolerance) around the key, which is byte-identical to
+   * the legacy whiteness test when the key is white.
+   */
+  keyColor?: string;
 }
 
 /** Stable short hash of a recipe for cache keys ('' = engine default). */
@@ -65,78 +74,143 @@ export function isKnownFallback(sprite: string | null): boolean {
   return !!b && STATUS[b] === 'fallback';
 }
 
+type RGB = [number, number, number];
+const WHITE_RGB: RGB = [255, 255, 255];
+const CORNER_AGREE = 12; // per-channel slack for "the corners share a colour"
+
+/** '#rrggbb' -> RGB, or null when malformed. */
+export function parseHexColor(c?: string | null): RGB | null {
+  if (!c || !/^#[0-9a-fA-F]{6}$/.test(c)) return null;
+  return [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+}
+
 /**
  * Flood-fill cutout from a seed set, in place on an RGBA buffer. Returns the
- * kept-opaque ratio, or -1 when the default heuristic decides the source isn't
- * a white-box sprite (so the caller boxes it). An explicit recipe skips that
- * heuristic and is applied verbatim (recipe beats heuristic, by design).
+ * kept-opaque ratio, or -1 when the default heuristic decides the source has
+ * no keyable uniform background (so the caller boxes it). An explicit recipe
+ * skips that heuristic and is applied verbatim (recipe beats heuristic).
+ *
+ * Chroma model: the border flood removes pixels within (255 - tolerance) per
+ * channel of the KEY colour - recipe.keyColor, else the colour the corners
+ * agree on (pure white snaps to the legacy whiteness test), else pure white
+ * for explicit recipes. Interior seeds each flood the colour sampled UNDER
+ * the seed, so mixed backgrounds are removed one click each.
  */
 export function carve(data: Uint8ClampedArray, w: number, h: number, recipe?: SpriteRecipe | null): number {
   const tolerance = recipe?.tolerance ?? WHITE;
+  const D = 255 - tolerance; // per-channel distance budget
   const borderSeeds = recipe?.borderSeeds ?? true;
   const extraSeeds = recipe?.seeds ?? [];
   const featherPasses = recipe?.feather ?? 1;
   const explicit = !!recipe && Object.keys(recipe).length > 0;
+  const N = w * h;
 
-  const whiteCorner = (x: number, y: number) => {
-    const p = (y * w + x) * 4;
-    return data[p + 3] > 250 && data[p] > tolerance && data[p + 1] > tolerance && data[p + 2] > tolerance;
+  const colorAt = (i: number): RGB => [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]];
+  const near = (i: number, c: RGB): boolean => {
+    const p = i * 4;
+    return (
+      Math.abs(data[p] - c[0]) < D &&
+      Math.abs(data[p + 1] - c[1]) < D &&
+      Math.abs(data[p + 2] - c[2]) < D
+    );
   };
-  if (!explicit) {
-    const whiteCorners =
-      Number(whiteCorner(0, 0)) + Number(whiteCorner(w - 1, 0)) +
-      Number(whiteCorner(0, h - 1)) + Number(whiteCorner(w - 1, h - 1));
-    if (whiteCorners < 3) return -1;
+
+  // Resolve the border-flood key colour.
+  let key = parseHexColor(recipe?.keyColor);
+  if (!key) {
+    if (explicit) {
+      key = WHITE_RGB; // tuned recipe without a key keeps the legacy white key
+    } else {
+      // Untuned: do >=3 opaque corners agree on a colour? That colour is the
+      // key (snapped to pure white when whitish, preserving the legacy path).
+      // No agreement = no keyable background -> boxed fallback.
+      const cornerIdx = [0, w - 1, (h - 1) * w, (h - 1) * w + w - 1];
+      const corners = cornerIdx
+        .filter((i) => data[i * 4 + 3] > 250)
+        .map((i) => colorAt(i));
+      let detected: RGB | null = null;
+      for (const cand of corners) {
+        const agree = corners.filter(
+          (c) =>
+            Math.abs(c[0] - cand[0]) <= CORNER_AGREE &&
+            Math.abs(c[1] - cand[1]) <= CORNER_AGREE &&
+            Math.abs(c[2] - cand[2]) <= CORNER_AGREE,
+        ).length;
+        if (agree >= 3) {
+          detected = cand;
+          break;
+        }
+      }
+      if (!detected) return -1;
+      const whitish = detected[0] > tolerance && detected[1] > tolerance && detected[2] > tolerance;
+      key = whitish ? WHITE_RGB : detected;
+    }
   }
 
-  const N = w * h;
-  const isWhitish = (i: number) => {
-    const p = i * 4;
-    return data[p] > tolerance && data[p + 1] > tolerance && data[p + 2] > tolerance;
-  };
   let opaqueBefore = 0;
   for (let i = 0; i < N; i++) if (data[i * 4 + 3] > 8) opaqueBefore++;
 
-  const visited = new Uint8Array(N);
-  const stack: number[] = [];
-  if (borderSeeds) {
-    for (let x = 0; x < w; x++) { stack.push(x); stack.push((h - 1) * w + x); }
-    for (let y = 0; y < h; y++) { stack.push(y * w); stack.push(y * w + w - 1); }
-  }
-  // Interior seed points (point-cascade): each floods its own connected
-  // near-white region, reaching pockets a border fill never can.
+  // Sample every seed's flood colour BEFORE any flood clears pixels.
+  const seedFloods: { start: number; color: RGB }[] = [];
   for (const s of extraSeeds) {
     const sx = Math.min(w - 1, Math.max(0, Math.round(s.x * (w - 1))));
     const sy = Math.min(h - 1, Math.max(0, Math.round(s.y * (h - 1))));
-    stack.push(sy * w + sx);
-  }
-  while (stack.length) {
-    const i = stack.pop() as number;
-    if (i < 0 || i >= N || visited[i]) continue;
-    visited[i] = 1;
-    if (!isWhitish(i)) continue;
-    data[i * 4 + 3] = 0;
-    const x = i % w, y = (i - x) / w;
-    if (x > 0) stack.push(i - 1);
-    if (x < w - 1) stack.push(i + 1);
-    if (y > 0) stack.push(i - w);
-    if (y < h - 1) stack.push(i + w);
+    const idx = sy * w + sx;
+    seedFloods.push({ start: idx, color: colorAt(idx) });
   }
 
+  const flood = (starts: number[], color: RGB) => {
+    const visited = new Uint8Array(N);
+    const stack = [...starts];
+    while (stack.length) {
+      const i = stack.pop() as number;
+      if (i < 0 || i >= N || visited[i]) continue;
+      visited[i] = 1;
+      if (!near(i, color)) continue;
+      data[i * 4 + 3] = 0;
+      const x = i % w, y = (i - x) / w;
+      if (x > 0) stack.push(i - 1);
+      if (x < w - 1) stack.push(i + 1);
+      if (y > 0) stack.push(i - w);
+      if (y < h - 1) stack.push(i + w);
+    }
+  };
+
+  if (borderSeeds) {
+    const border: number[] = [];
+    for (let x = 0; x < w; x++) { border.push(x); border.push((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { border.push(y * w); border.push(y * w + w - 1); }
+    flood(border, key);
+  }
+  // Interior seed points (point-cascade): each floods its own connected region
+  // of its own sampled colour, reaching pockets a border fill never can.
+  for (const sf of seedFloods) flood([sf.start], sf.color);
+
+  // Edge feather. The white key keeps the exact legacy near-white test; other
+  // keys fade edge pixels that sit just outside the removal budget.
+  const isFeatherable = (p: number): boolean => {
+    if (key === WHITE_RGB || (key[0] === 255 && key[1] === 255 && key[2] === 255)) {
+      const mn = Math.min(data[p], data[p + 1], data[p + 2]);
+      const mx = Math.max(data[p], data[p + 1], data[p + 2]);
+      return mn > FEATHER_MIN && mx - mn < FEATHER_SAT;
+    }
+    return (
+      Math.abs(data[p] - key[0]) < D + 25 &&
+      Math.abs(data[p + 1] - key[1]) < D + 25 &&
+      Math.abs(data[p + 2] - key[2]) < D + 25
+    );
+  };
   for (let pass = 0; pass < featherPasses; pass++) {
     for (let i = 0; i < N; i++) {
       if (data[i * 4 + 3] === 0) continue;
       const x = i % w, y = (i - x) / w, p = i * 4;
-      const mn = Math.min(data[p], data[p + 1], data[p + 2]);
-      const mx = Math.max(data[p], data[p + 1], data[p + 2]);
-      if (mn > FEATHER_MIN && mx - mn < FEATHER_SAT) {
-        let edge = false;
-        if (x > 0 && data[(i - 1) * 4 + 3] === 0) edge = true;
-        else if (x < w - 1 && data[(i + 1) * 4 + 3] === 0) edge = true;
-        else if (y > 0 && data[(i - w) * 4 + 3] === 0) edge = true;
-        else if (y < h - 1 && data[(i + w) * 4 + 3] === 0) edge = true;
-        if (edge) data[p + 3] = Math.round(data[p + 3] * FEATHER_ALPHA);
-      }
+      if (!isFeatherable(p)) continue;
+      let edge = false;
+      if (x > 0 && data[(i - 1) * 4 + 3] === 0) edge = true;
+      else if (x < w - 1 && data[(i + 1) * 4 + 3] === 0) edge = true;
+      else if (y > 0 && data[(i - w) * 4 + 3] === 0) edge = true;
+      else if (y < h - 1 && data[(i + w) * 4 + 3] === 0) edge = true;
+      if (edge) data[p + 3] = Math.round(data[p + 3] * FEATHER_ALPHA);
     }
   }
 

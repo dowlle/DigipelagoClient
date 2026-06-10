@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carve, recipeHash, type SpriteRecipe } from './spriteEngine';
+import { carve, parseHexColor, recipeHash, type SpriteRecipe } from './spriteEngine';
 
 // Build a w x h RGBA buffer filled with a color.
 function image(w: number, h: number, rgb: [number, number, number]): Uint8ClampedArray {
@@ -67,10 +67,14 @@ describe('carve (recipe-driven flood fill)', () => {
     expect(alphaAt(data, w, 5, 5)).toBe(0); // pocket cleared via the seed
   });
 
-  it('non-white-box image without a recipe returns -1 (boxed fallback)', () => {
+  it('uniform non-white image auto-keys to nothing kept (mangle heuristic then boxes it)', () => {
+    // Used to be -1 (white-only corner check). With chroma auto-detection the
+    // agreeing dark corners become the key, everything is background, kept
+    // ratio 0 -> looksMangled() boxes it downstream. The -1 path now requires
+    // DISAGREEING corners (see the chroma describe block).
     const w = 8, h = 8;
-    const data = image(w, h, [10, 10, 60]); // dark background, no white corners
-    expect(carve(data, w, h)).toBe(-1);
+    const data = image(w, h, [10, 10, 60]);
+    expect(carve(data, w, h)).toBe(0);
   });
 
   it('an explicit recipe skips the corner heuristic', () => {
@@ -87,6 +91,62 @@ describe('carve (recipe-driven flood fill)', () => {
     expect(carve(data, w, h, { tolerance: 210 })).toBeLessThan(1); // grey removed
     const data2 = image(w, h, [220, 220, 220]);
     expect(carve(data2, w, h, { tolerance: 240 })).toBe(1); // grey kept
+  });
+});
+
+describe('carve (chroma keying)', () => {
+  const BLACK: [number, number, number] = [5, 5, 8];
+  const MAROON: [number, number, number] = [96, 16, 16];
+  const BLUE: [number, number, number] = [40, 80, 220];
+
+  it('auto-detects a uniform non-white background from the corners (untuned)', () => {
+    // 3D-render case: dark background, no recipe. Previously -1 (boxed square).
+    const w = 10, h = 10;
+    const data = image(w, h, BLACK);
+    for (let y = 3; y <= 6; y++) for (let x = 3; x <= 6; x++) setPx(data, w, x, y, BODY);
+    const kept = carve(data, w, h);
+    expect(kept).toBeGreaterThan(0);
+    expect(alphaAt(data, w, 0, 0)).toBe(0); // black background keyed out
+    expect(alphaAt(data, w, 4, 4)).toBe(255); // body kept
+  });
+
+  it('stays boxed when the corners disagree (anime screenshot case)', () => {
+    const w = 10, h = 10;
+    const data = image(w, h, BLACK);
+    setPx(data, w, 0, 0, [200, 30, 30]);
+    setPx(data, w, w - 1, 0, BLUE); // 2 odd corners: only 2 agree
+    expect(carve(data, w, h)).toBe(-1);
+  });
+
+  it('recipe keyColor floods that colour from the border', () => {
+    const w = 10, h = 10;
+    const data = image(w, h, MAROON);
+    for (let y = 3; y <= 6; y++) for (let x = 3; x <= 6; x++) setPx(data, w, x, y, BODY);
+    carve(data, w, h, { keyColor: '#601010' });
+    expect(alphaAt(data, w, 0, 0)).toBe(0);
+    expect(alphaAt(data, w, 4, 4)).toBe(255);
+  });
+
+  it('each interior seed floods the colour sampled under it', () => {
+    // White background, body ring enclosing a BLUE pocket: the white border
+    // flood cannot reach it and it is not white, so only a colour-sampling
+    // seed can clear it.
+    const { data, w, h } = pocketImage();
+    for (let y = 5; y <= 6; y++) for (let x = 5; x <= 6; x++) setPx(data, w, x, y, BLUE);
+    carve(data, w, h, { seeds: [{ x: 5 / 11, y: 5 / 11 }] });
+    expect(alphaAt(data, w, 5, 5)).toBe(0); // blue pocket cleared via its own colour
+    expect(alphaAt(data, w, 4, 4)).toBe(255); // body kept
+    expect(alphaAt(data, w, 0, 0)).toBe(0); // white background still keyed
+  });
+});
+
+describe('parseHexColor', () => {
+  it('parses #rrggbb and rejects malformed values', () => {
+    expect(parseHexColor('#ffffff')).toEqual([255, 255, 255]);
+    expect(parseHexColor('#601010')).toEqual([96, 16, 16]);
+    expect(parseHexColor('601010')).toBeNull();
+    expect(parseHexColor('#fff')).toBeNull();
+    expect(parseHexColor(null)).toBeNull();
   });
 });
 

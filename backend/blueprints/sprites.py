@@ -18,6 +18,7 @@ dataset rebuilds, mirroring the difficulty stats.
 """
 
 import json
+import re
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_limiter import Limiter
@@ -45,6 +46,7 @@ TOLERANCE_MIN, TOLERANCE_MAX = 150, 254
 FEATHER_MAX = 4
 MAX_SEEDS = 16
 MAX_NOTE_LEN = 500
+KEY_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _is_owner() -> bool:
@@ -93,6 +95,12 @@ def validate_recipe(raw) -> dict | None:
         if not 0 <= f <= FEATHER_MAX:
             return None
         clean["feather"] = f
+
+    if "keyColor" in raw and raw["keyColor"] is not None:
+        kc = raw["keyColor"]
+        if not isinstance(kc, str) or not KEY_COLOR_RE.match(kc):
+            return None
+        clean["keyColor"] = kc.lower()
 
     if "seeds" in raw and raw["seeds"] is not None:
         seeds = raw["seeds"]

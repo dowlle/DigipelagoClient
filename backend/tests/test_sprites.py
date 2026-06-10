@@ -176,6 +176,13 @@ def test_validate_recipe_empty_ok():
     assert sprites.validate_recipe({"mode": "boxed"}) == {"mode": "boxed"}
 
 
+def test_validate_recipe_key_color():
+    assert sprites.validate_recipe({"keyColor": "#1A2b3C"}) == {"keyColor": "#1a2b3c"}
+    assert sprites.validate_recipe({"keyColor": "red"}) is None
+    assert sprites.validate_recipe({"keyColor": "#12345"}) is None
+    assert sprites.validate_recipe({"keyColor": 123456}) is None
+
+
 # --- GET blob -----------------------------------------------------------------
 
 def test_get_empty(client):
