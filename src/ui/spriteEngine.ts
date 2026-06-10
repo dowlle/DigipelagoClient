@@ -49,10 +49,23 @@ export interface SpriteRecipe {
   keyColor?: string;
 }
 
-/** Stable short hash of a recipe for cache keys ('' = engine default). */
+/** Stable short hash of a recipe for cache keys ('' = engine default).
+ *  Canonicalized by sorting keys at every level (a replacer ARRAY would act as
+ *  a recursive property whitelist and drop nested seed coords - real bug). */
 export function recipeHash(recipe?: SpriteRecipe | null): string {
   if (!recipe || Object.keys(recipe).length === 0) return '';
-  const canonical = JSON.stringify(recipe, Object.keys(recipe as Record<string, unknown>).sort());
+  const canonicalize = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(canonicalize);
+    if (v && typeof v === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        out[k] = canonicalize((v as Record<string, unknown>)[k]);
+      }
+      return out;
+    }
+    return v;
+  };
+  const canonical = JSON.stringify(canonicalize(recipe));
   let h = 5381;
   for (let i = 0; i < canonical.length; i++) h = ((h << 5) + h + canonical.charCodeAt(i)) >>> 0;
   return h.toString(36);
@@ -258,8 +271,12 @@ async function withFetchSlot<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const RETRIES = 3;
+const FETCH_TIMEOUT_MS = 15_000;
 
-/** Fetch with backoff. Retries network errors, 429, and 5xx; other 4xx are final. */
+/** Fetch with backoff + a hard per-attempt timeout. Retries network errors,
+ *  timeouts, 429, and 5xx; other 4xx are final. Without the timeout a single
+ *  stalled connection holds a fetch slot forever - six stalls froze the whole
+ *  sprite pipeline (every queued cell stayed blank). */
 async function fetchSpriteBlob(srcUrl: string): Promise<Blob> {
   let lastError: unknown;
   for (let attempt = 0; attempt < RETRIES; attempt++) {
@@ -267,13 +284,17 @@ async function fetchSpriteBlob(srcUrl: string): Promise<Blob> {
       const delay = 600 * 2 ** (attempt - 1) + Math.random() * 400;
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(new Error('sprite fetch timeout')), FETCH_TIMEOUT_MS);
     try {
-      const res = await fetch(srcUrl, { mode: 'cors' });
+      const res = await fetch(srcUrl, { mode: 'cors', signal: ctrl.signal });
       if (res.ok) return await res.blob();
       lastError = new Error(`sprite fetch ${res.status}`);
       if (res.status !== 429 && res.status < 500) break; // permanent 4xx
     } catch (e) {
       lastError = e;
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastError;
@@ -410,6 +431,11 @@ export function loadSprite(
     .then((out) => {
       resolved.set(key, out);
       return out;
+    })
+    .catch((e: unknown) => {
+      // Surface WHY a sprite failed (filter the console on [digipelago:sprites]).
+      console.warn(`[digipelago:sprites] ${base} failed:`, e instanceof Error ? e.message : e);
+      throw e;
     })
     .finally(() => inflight.delete(key));
   inflight.set(key, p);

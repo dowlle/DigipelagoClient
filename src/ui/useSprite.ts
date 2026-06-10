@@ -30,6 +30,15 @@ export function useSprite(src: string | null, digimonId?: number): SpriteResult 
 
   const [res, setRes] = useState<{ url: string; isCutout: boolean } | null>(null);
   const [failed, setFailed] = useState(false);
+  // Bounded auto-retry: a failed sprite re-attempts after a pause instead of
+  // staying blank until its dex group remounts. attempt bumps re-run the effect.
+  const [attempt, setAttempt] = useState(0);
+  const RETRY_DELAYS_MS = [8_000, 30_000];
+
+  // A different sprite/recipe starts with a fresh retry budget (no-op when 0).
+  useEffect(() => {
+    setAttempt(0);
+  }, [src, rHash]);
 
   useEffect(() => {
     setRes(null);
@@ -37,15 +46,24 @@ export function useSprite(src: string | null, digimonId?: number): SpriteResult 
     if (!src || consent !== 'granted') return;
     ensureRecipesLoaded();
     let alive = true;
+    let retryTimer: number | undefined;
     loadSprite(src, recipe)
       .then((r) => alive && setRes(r))
-      .catch(() => alive && setFailed(true));
+      .catch(() => {
+        if (!alive) return;
+        setFailed(true);
+        const delay = RETRY_DELAYS_MS[attempt];
+        if (delay !== undefined) {
+          retryTimer = window.setTimeout(() => setAttempt((a) => a + 1), delay);
+        }
+      });
     return () => {
       alive = false;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
     // recipe identity is captured by its hash (a stable object is not guaranteed).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src, consent, rHash]);
+  }, [src, consent, rHash, attempt]);
 
   if (!src) return { state: 'none', url: null, isCutout: false };
   if (consent !== 'granted') return { state: 'no-consent', url: null, isCutout: false };
